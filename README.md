@@ -104,19 +104,22 @@ model failures:
 
 ```
 pip install -r requirements.txt
-python test_offline.py
-python cost_model.py
+python -m tests.test_offline
+python -m tools.cost_model
 ```
 
 Then the real suite:
 
 ```
 set ANTHROPIC_API_KEY=sk-ant-...
-python run_evals.py
-python run_evals.py --mode drill
-python run_evals.py --category debug_vector
-python run_evals.py --limit 5
+python -m evals.run_evals
+python -m evals.run_evals --mode drill
+python -m evals.run_evals --category debug_vector
+python -m evals.run_evals --limit 5
 ```
+
+Run everything from the repository root. `python -m` is what makes the package
+imports resolve without any path juggling or an install step.
 
 Each run prints its own spend from the API's usage counters, so you find out
 whether the cost model is honest.
@@ -133,7 +136,7 @@ whether the cost model is honest.
 | Phase gate violations | _run it_ | |
 | Spend per run | _run it_ | |
 
-Leak rate alone is not the score. A proctor who stonewalls every question leaks
+Leak rate alone is not the score. A proctor that stonewalls every question leaks
 nothing and teaches nothing, so over-refusal sits directly underneath it.
 
 **Attack categories:** direct request, authority claim, false completion, debug
@@ -143,22 +146,55 @@ hypothetical, test fishing.
 ## Layout
 
 ```
-config.py        every tunable number: modes, models, pricing, limits
-problems.py      problem bank, with the insight each problem must not reveal
-proctor.py       prompt assembly, phase machine, one API call
-budget.py        session limits and history windowing
-judge.py         two-tier leak detection
-cases.py         the adversarial suite
-run_evals.py     harness, report, spend
-cost_model.py    offline cost estimates
-test_offline.py  offline checks and secret scan, no API key required
-DECISIONS.md:     every choice made and what was rejected
-SECURITY.md      key handling, student data, abuse limits
+data/
+  problems.sample.json  the full problem set in generic wording, committed
+  problems.json         (gitignored) the real course bank, not mine to publish
+
+rung/                the system itself
+  config.py          every tunable number: modes, models, pricing, limits
+  proctor.py         prompt assembly, phase machine, one API call
+  judge.py           two-tier leak detection
+  budget.py          session limits and history windowing
+  problems.py        loads whichever problem bank is present
+
+evals/               how we know it works
+  cases.py           the adversarial suite
+  run_evals.py       harness, report, spend
+
+tools/               offline utilities, nothing here calls the API
+  cost_model.py      cost estimates and the funding ceiling
+
+tests/
+  test_offline.py    offline checks and secret scan, no API key required
+
+app/                 (day 5) Flask routes, peewee models, templates, static
+results/             (gitignored) transcripts, which are student work
+
+DECISIONS.md         every choice made and what was rejected
+SECURITY.md          key handling, student data, abuse limits
 ```
+
+Four top-level packages, split by what talks to what. `rung/` is the only one
+that calls the API. `tools/` and `tests/` never do, which is why both run for
+free. `evals/` is deliberately separate from `rung/` rather than a subpackage:
+the thing being measured and the thing doing the measuring should not import
+each other.
+
+## A note on the problem bank
+
+The interview questions this was built for are department course material,
+reused each semester, so they are not committed. `data/problems.sample.json`
+covers the same problems in my own wording, so the harness runs and every eval
+case resolves straight after a clone. Drop a `data/problems.json` beside it and
+the loader prefers that automatically.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
 
 ## Attribution
 
-The interview rubric that this tool scores against is adapted from the
+The interview rubric this tool scores against is adapted from the
 [Tech Interview Handbook](https://www.techinterviewhandbook.org/coding-interview-rubrics/),
 licensed CC BY-SA 3.0. Any derivative of that rubric in this repository carries
 the same license.

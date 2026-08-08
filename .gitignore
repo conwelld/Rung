@@ -1,0 +1,12 @@
+*.pyc
+__pycache__/
+.env
+.venv/
+venv/
+*.db
+
+# transcripts contain student work
+results/
+
+# the department question bank is course material, not mine to publish
+data/problems.json

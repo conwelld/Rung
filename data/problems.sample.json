@@ -1,0 +1,253 @@
+{
+  "count_letters": {
+    "unit": 1,
+    "title": "count_letters",
+    "concepts": [
+      "function-basics",
+      "string-traversal",
+      "conditionals"
+    ],
+    "prompt": "Write a function count_letters(word) that returns how many alphabetic characters the string contains. Digits, punctuation and spaces do not count. Example: count_letters(\"a1b2 c!\") returns 3",
+    "forbidden_insight": "Walk the characters one at a time and use the built-in alphabetic test on each, adding to a running counter when it passes.",
+    "tests": [
+      [
+        "a1b2 c!",
+        3
+      ],
+      [
+        "",
+        0
+      ],
+      [
+        "1234",
+        0
+      ],
+      [
+        "abc",
+        3
+      ]
+    ]
+  },
+  "compress_run": {
+    "unit": 1,
+    "title": "compress_run",
+    "concepts": [
+      "string-traversal",
+      "accumulator",
+      "loops",
+      "edge-cases"
+    ],
+    "prompt": "Write a function compress_run(text) that replaces each run of identical consecutive characters with that character followed by the length of the run. Example: compress_run(\"xxxyyz\") returns \"x3y2z1\"",
+    "forbidden_insight": "Hold the character you are currently in a run of plus a counter. When the next character differs, write out the pair and reset. The final run still needs writing after the loop ends.",
+    "tests": [
+      [
+        "xxxyyz",
+        "x3y2z1"
+      ],
+      [
+        "",
+        ""
+      ],
+      [
+        "q",
+        "q1"
+      ],
+      [
+        "aabaa",
+        "a2b1a2"
+      ]
+    ]
+  },
+  "second_largest": {
+    "unit": 1,
+    "title": "second_largest",
+    "concepts": [
+      "list-traversal",
+      "sorting",
+      "edge-cases"
+    ],
+    "prompt": "Write a function second_largest(numbers) that returns the second largest distinct value in a list of integers, or None when fewer than two distinct values exist. Example: second_largest([4, 9, 9, 1]) returns 4",
+    "forbidden_insight": "Collapse duplicates first, then either order the remaining values and take the one below the top, or carry the best two seen so far through a single pass.",
+    "tests": [
+      [
+        [
+          4,
+          9,
+          9,
+          1
+        ],
+        4
+      ],
+      [
+        [
+          7
+        ],
+        null
+      ],
+      [
+        [
+          3,
+          3,
+          3
+        ],
+        null
+      ],
+      [
+        [
+          1,
+          2
+        ],
+        1
+      ]
+    ]
+  },
+  "find_pairs": {
+    "unit": 2,
+    "title": "find_pairs",
+    "concepts": [
+      "list-traversal",
+      "nested-iteration",
+      "complexity"
+    ],
+    "prompt": "Write a function find_pairs(numbers, target) that returns every pair of values from the list that sums to target. Example: find_pairs([1, 4, 5, 6], 10) returns [(4, 6)]",
+    "forbidden_insight": "As you pass through the list, ask whether the value that would complete the sum has already gone by. Remembering what you have seen collapses the double loop into one.",
+    "tests": [
+      [
+        [
+          [
+            1,
+            4,
+            5,
+            6
+          ],
+          10
+        ],
+        [
+          [
+            4,
+            6
+          ]
+        ]
+      ],
+      [
+        [
+          [
+            1,
+            2
+          ],
+          99
+        ],
+        []
+      ]
+    ]
+  },
+  "multiply_except": {
+    "unit": 2,
+    "title": "multiply_except",
+    "concepts": [
+      "list-traversal",
+      "accumulator",
+      "complexity",
+      "edge-cases"
+    ],
+    "prompt": "Write a function multiply_except(numbers) returning a list where each position holds the product of every other value in the input. Example: multiply_except([2, 3, 4]) returns [12, 8, 6]",
+    "forbidden_insight": "Accumulate products travelling forward through the list and again travelling backward, then combine the two at each position. Dividing the total instead falls apart when a zero is present.",
+    "tests": [
+      [
+        [
+          2,
+          3,
+          4
+        ],
+        [
+          12,
+          8,
+          6
+        ]
+      ],
+      [
+        [
+          5,
+          5
+        ],
+        [
+          5,
+          5
+        ]
+      ]
+    ]
+  },
+  "invert_dictionary": {
+    "unit": 3,
+    "title": "invert_dictionary",
+    "concepts": [
+      "dict-construction",
+      "dict-of-lists",
+      "grouping"
+    ],
+    "prompt": "Write a function invert_dictionary(d) that exchanges keys and values. When several keys share a value, collect those keys into a list. Example: invert_dictionary({'x': 1, 'y': 2, 'z': 1}) returns {1: ['x', 'z'], 2: ['y']}",
+    "forbidden_insight": "Walk the pairs and attach each key onto a growing list filed under its value, using setdefault or a membership test so the list exists the first time you reach a value.",
+    "tests": [
+      [
+        {
+          "x": 1,
+          "y": 2,
+          "z": 1
+        },
+        {
+          "1": [
+            "x",
+            "z"
+          ],
+          "2": [
+            "y"
+          ]
+        }
+      ],
+      [
+        {},
+        {}
+      ]
+    ]
+  },
+  "log_purchase": {
+    "unit": 3,
+    "title": "log_purchase",
+    "concepts": [
+      "dict-construction",
+      "nested-dicts",
+      "mutation-vs-return"
+    ],
+    "prompt": "Write a function log_purchase(name, unit_price, quantity, ledger) that records a purchase into ledger, where each item name maps to an inner dictionary holding 'qty' and 'spent'. Repeat purchases add to both fields rather than replacing them. The ledger is passed in and also returned. Example: log_purchase('pen', 1.50, 2, {}) returns {'pen': {'qty': 2, 'spent': 3.00}}",
+    "forbidden_insight": "Look for the item first. Present means adding onto both inner fields, absent means building the inner dictionary fresh. The dictionary handed in is modified where it stands and then handed back.",
+    "tests": [
+      [
+        [
+          "pen",
+          1.5,
+          2,
+          {}
+        ],
+        {
+          "pen": {
+            "qty": 2,
+            "spent": 3.0
+          }
+        }
+      ]
+    ]
+  },
+  "student_class": {
+    "unit": 4,
+    "title": "Student class",
+    "concepts": [
+      "class-definition",
+      "attributes",
+      "methods",
+      "mutation-vs-return"
+    ],
+    "prompt": "Define a class Student holding a name, an id, and a collection of grades. Give it a way to record a new grade, a way to report the average, and a way to report the highest. Create one student, record several grades, and print the average.",
+    "forbidden_insight": "The initialiser stores the name and id and starts an empty collection of grades on the instance. Recording a grade adds to that collection. The average divides the total by how many there are.",
+    "tests": []
+  }
+}
