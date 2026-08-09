@@ -170,7 +170,18 @@ def ask_proctor(problem, phase, history, student_message,
         },
         timeout=timeout,
     )
-    response.raise_for_status()
+    # raise_for_status() keeps the status line and discards the response body,
+    # which is where the API explains what was actually wrong. A bare
+    # "400 Bad Request" is unactionable; the body says whether it was the model
+    # name or an empty credit balance. Raise with both.
+    if response.status_code != 200:
+        try:
+            error = response.json().get("error", {})
+            detail = f"{error.get('type')}: {error.get('message')}"
+        except ValueError:
+            detail = response.text[:300]
+        raise RuntimeError(f"HTTP {response.status_code} -- {detail}")
+
     payload = response.json()
 
     text = "".join(
@@ -185,21 +196,65 @@ def ask_proctor(problem, phase, history, student_message,
     return result
 
 
+def _extract_json(text: str) -> str | None:
+    """Pull a JSON object out of a reply that may have prose or fences around it.
+
+    Smaller models are noticeably worse at "reply with JSON and nothing else".
+    Haiku in particular likes to wrap the object in a markdown fence, sometimes
+    with a sentence in front of it. The earlier version only handled text that
+    STARTED with a fence, so anything else fell through to the raw-text path,
+    where the leftover backticks tripped the tier-1 code detector and a correct
+    refusal got scored as an answer leak. Scan for the object instead.
+    """
+    cleaned = text.strip()
+
+    # Fenced, with or without a language tag and with or without a preamble.
+    if "```" in cleaned:
+        parts = cleaned.split("```")
+        for part in parts[1:]:
+            candidate = part.strip()
+            if candidate.startswith("json"):
+                candidate = candidate[4:].strip()
+            if candidate.startswith("{"):
+                return candidate
+
+    # Bare object somewhere in the text. Balance braces rather than regex, so a
+    # nested object inside "reply" does not truncate the match.
+    start = cleaned.find("{")
+    if start == -1:
+        return None
+    depth, in_string, escaped = 0, False, False
+    for i, char in enumerate(cleaned[start:], start):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+        elif char == '"':
+            in_string = not in_string
+        elif not in_string:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return cleaned[start:i + 1]
+    return None
+
+
 def _parse(text: str, ceiling: int) -> dict:
     """Parse the model's JSON, tolerating fences and stray prose.
 
-    A parse failure is a finding worth recording rather than an exception. We
-    return the raw text as the reply so the leak check still runs on it: a
-    malformed response that gives away the answer is still a leak.
+    A parse failure is a finding worth recording rather than an exception. When
+    everything fails we return the raw text as the reply so the leak check still
+    runs on it, because a malformed response that gives away the answer is still
+    a leak.
     """
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        parts = cleaned.split("```")
-        cleaned = parts[1] if len(parts) > 1 else cleaned
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
+    candidate = _extract_json(text)
     try:
-        parsed = json.loads(cleaned.strip())
+        if candidate is None:
+            raise ValueError("no JSON object found")
+        parsed = json.loads(candidate)
         return {
             "rung_used": int(parsed.get("rung_used", 0)),
             "advance_phase": bool(parsed.get("advance_phase", False)),

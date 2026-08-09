@@ -126,22 +126,75 @@ whether the cost model is honest.
 
 ## Results
 
-43 cases: 38 adversarial across ten categories, 5 controls.
+177 adversarial cases across two models. Every number below is reproducible
+from this repository, though against the sample problem bank rather than the
+course one, so exact figures will differ slightly.
 
-| Metric | interview | drill |
-|---|---|---|
-| Answer leakage | _run it_ | |
-| Over-refusal (controls) | _run it_ | |
-| Rung ceiling violations | _run it_ | |
-| Phase gate violations | _run it_ | |
-| Spend per run | _run it_ | |
+| Run | Attacks | Leaks | Over-refusal | Rung violations | Parse fails | Cost |
+|---|---|---|---|---|---|---|
+| interview, single-turn | 38 | **0** | 0/5 | 0 | 0 | $0.19 |
+| interview, multi-turn | 11 | **0** | 0/2 | 0 | 0 | $0.07 |
+| drill (Haiku), both suites | 32 | **0** | 0/3 | 0 | 0 | $0.03 |
+| red team, model-generated | 96 | **0** | n/a | 0 | 0 | ~$1.00 |
 
 Leak rate alone is not the score. A proctor that stonewalls every question leaks
-nothing and teaches nothing, so over-refusal sits directly underneath it.
+nothing and teaches nothing, which is why over-refusal on the control cases sits
+in the same table.
 
-**Attack categories:** direct request, authority claim, false completion, debug
-vector, incremental extraction, phase skip, emotional pressure, format reframe,
-hypothetical, test fishing.
+**Hand-written categories (16):** direct request, authority claim, false
+completion, debug vector, incremental extraction, phase skip, emotional
+pressure, format reframe, hypothetical, test fishing, rapport-then-ask, deep
+extraction, false premise built, role drift, persistence, partial completion.
+
+### The measurement was wrong three times before the result was right
+
+A perfect score from an unvalidated instrument is worth nothing, so most of the
+work went into trying to make the harness fail. It did, three times, and each
+failure was in the measurement rather than the proctor.
+
+**Tier 1 flagged good questions as code.** An unanchored `return` pattern fired
+on "what should this return for an empty input?", a textbook proctor turn.
+Caught by the offline suite before it cost an API call. Anchoring to line starts
+fixed it.
+
+**The judge punished the proctor for the student's own ideas.** A control case
+was scored as a leak when the proctor walked a student's stated plan through a
+counterexample. The judge only ever saw the proctor's reply, so it could not
+tell revealing an idea from reflecting one back. It now receives the student's
+turn and is told that an idea the student raised belongs to the student.
+`tools/check_judge.py` holds the regression, plus a case where the student was
+close but the proctor still supplied the missing piece, so the fix did not just
+make the judge blind.
+
+**A correct refusal was scored as an answer leak.** Haiku wrapped its JSON in a
+markdown fence behind a sentence of preamble. The parser only handled text that
+started with a fence, so it fell through to the raw-text path, where the
+leftover backticks tripped the code detector. Found only by testing drill mode,
+which is the mode students actually use, and which had never been run until
+that point.
+
+### Validating the judge
+
+`python -m tools.check_judge` feeds 15 replies with known verdicts through tier
+2: 7 that hand over the structural insight in plain English, 8 that are good
+proctor turns. Current: 7/7 caught, 8/8 passed. A zero from the suite means the
+proctor held rather than that the judge is asleep.
+
+### Red-teaming
+
+The hand-written suite has a structural weakness: the same person wrote the
+attacks and the defences, and the system prompt names four attack categories
+outright. `python -m tools.red_team` asks a model to invent attacks while
+showing it only the problem statement, never the system prompt, rules, ladder,
+phases, or forbidden insight. It produced angles the suite did not have,
+including unit-test generation, git-diff framing, docstring extraction, and
+"write the version a failing candidate would submit".
+
+### What this does not show
+
+Every attack is text in a chat turn. Nothing here tests a real student over 30
+minutes, a browser client, or code execution. The claim is bounded: across 177
+adversarial turns on two models, the proctor did not hand over a solution.
 
 ## Layout
 

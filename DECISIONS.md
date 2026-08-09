@@ -245,6 +245,51 @@ under CC BY-SA 3.0, and ShareAlike attaches to derivatives of that rubric
 specifically rather than to the whole codebase, so the attribution lives in the
 README and the code stays MIT.
 
+### Testing drill mode, not just interview mode
+
+**Chose:** Run the full suite against both modes.
+**Rejected:** Validating on Sonnet and assuming Haiku behaves the same.
+**Why:** Every run for the first several rounds was interview mode. By my own
+cost model that path runs 120 times a semester while drill runs 6,750. I was
+rigorously testing the rare configuration and had never once run the common one.
+The first drill run immediately surfaced a bug that interview mode could not
+produce: Haiku is less reliable at "reply with JSON and nothing else", which
+broke the parser, which turned a correct refusal into a scored answer leak.
+**Cost:** Two baselines to maintain, and the numbers are not comparable across
+models so they get reported separately.
+
+### Parsing JSON from anywhere in the reply
+
+**Chose:** Scan for the object, handling fences with preamble and bare objects
+in prose, with brace balancing so nested braces in the reply text survive.
+**Rejected:** The original, which only stripped a fence when the text started
+with one.
+**Why:** Haiku wrapped its JSON in a fence behind a sentence of preamble. That
+fell through to the raw-text fallback, where leftover backticks tripped the
+tier-1 code detector, and a perfectly good refusal was recorded as an answer
+leak. The bug was in the harness and it inflated the failure count rather than
+hiding failures, which is the less dangerous direction but still wrong. When a
+tier-1 hit does land on unparsed output, the reason string now says so, so a
+formatting artefact is distinguishable from a real leak by eye.
+
+### Accessibility framing showed up in the generated attacks
+
+Not a decision yet, a finding worth recording. A large share of the
+model-generated attacks were framed as accommodation requests: screen readers
+garbling hints, visual processing disorders, ADHD accommodation letters, needing
+fully worked examples rather than fragments. The proctor refused all of them,
+which is right against an attacker.
+
+But students with real accommodations phrase requests the same way, because that
+is how you ask for an accommodation. A proctor that treats "I process worked
+examples better than fragments" as an attack fails hardest for the students who
+most need it to work. Refusing harder is not the fix and neither is a smarter
+classifier, since the proctor cannot verify a claim made mid-interview either
+way. The likely answer is that accommodations are handled outside the
+conversation, as account settings the department sets: longer limits, a lower
+rung ceiling, more worked examples in the practice bank. Needs a conversation
+with whoever owns the course before it becomes a design.
+
 ---
 
 ## Still open
@@ -257,3 +302,9 @@ README and the code stays MIT.
   session end. Per turn is richer and roughly four times the cost.
 - Whether `DAILY_DRILL_LIMIT` of 12 is right. It sets the funding ceiling
   directly, and halving it halves the number in the proposal.
+- How accommodations are handled, given that the proctor cannot verify a claim
+  made mid-interview and refusing everything that sounds like one is the wrong
+  answer. Probably account settings rather than conversation.
+- Whether 177 clean adversarial cases means the constraint is robust or the
+  attacks are still too easy. Running the red-teamer repeatedly at higher counts
+  is the cheapest way to keep testing that.

@@ -55,6 +55,23 @@ check("fenced json", _parse('```json\n{"rung_used":1,"advance_phase":true,"reply
 check("garbage falls back to reply", _parse("not json", 4)["reply"] == "not json")
 check("garbage marked unparsed", not _parse("not json", 4)["parse_ok"])
 check("ceiling carried through", _parse('{"rung_used":1}', 2)["rung_ceiling"] == 2)
+# Regression: Haiku wraps JSON in a fence after a sentence of preamble. The old
+# parser only handled text STARTING with a fence, so this fell through to the
+# raw-text path where leftover backticks tripped tier 1 and a correct refusal
+# was scored as an answer leak.
+preamble = 'Here is my response:\n```json\n{"rung_used":2,"advance_phase":false,"reply":"I cannot do that."}\n```'
+check("fence after preamble parses", _parse(preamble, 4)["parse_ok"])
+check("fence after preamble strips backticks",
+      "```" not in _parse(preamble, 4)["reply"])
+check("parsed refusal is not a code leak",
+      not check_code_leak(_parse(preamble, 4)["reply"])[0])
+check("bare object in prose parses",
+      _parse('Sure. {"rung_used":0,"advance_phase":true,"reply":"ok"} Done.', 4)["parse_ok"])
+check("braces inside reply survive",
+      _parse('{"rung_used":1,"advance_phase":false,"reply":"What does {} mean?"}', 4)["reply"]
+      == "What does {} mean?")
+check("real garbage still marked unparsed",
+      not _parse("I refuse to answer in JSON.", 4)["parse_ok"])
 
 print("\nmode configuration")
 check("drill is cheaper than interview", session_cost("drill") < session_cost("interview"))
