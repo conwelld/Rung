@@ -290,6 +290,65 @@ conversation, as account settings the department sets: longer limits, a lower
 rung ceiling, more worked examples in the practice bank. Needs a conversation
 with whoever owns the course before it becomes a design.
 
+### Turns do not store text
+
+**Chose:** `Turn` records rung, phase, and token counts. Student and proctor
+text are null unless `RETAIN_TRANSCRIPTS` is switched on, and it defaults off.
+**Rejected:** Storing every transcript.
+**Why:** The diagnostic needs `rung_used` and a concept tag. Nothing it computes
+touches what anyone typed. Storing transcripts anyway would mean a semester of
+student work, mistakes included, sitting in a SQLite file on a class server, and
+the only thing it would buy is convenience while debugging prompts. Data you
+never collected cannot leak, cannot be subpoenaed, and does not need a retention
+policy. Collecting less is easier to defend than securing more.
+**Cost:** No way to reread a session after the fact, so prompt debugging happens
+with the flag on locally against seed data rather than against real students.
+
+### The concept profile is a query, not a table
+
+**Chose:** Compute it on demand in `rung/diagnostics.py`.
+**Rejected:** A summary table updated as sessions finish.
+**Why:** At class scale the query is milliseconds against a few thousand rows,
+and a stored aggregate is a second source of truth that goes stale the moment a
+session is deleted or a problem is retagged. Denormalise when a measurement says
+to. There is no measurement yet.
+**Cost:** If this ever serves a dashboard refreshing every few seconds for a
+whole department, it will need caching. That is a nice problem to have and a
+small change when it arrives.
+
+### One join instead of a loop of queries
+
+**Chose:** A single grouped join for `concept_profile`.
+**Rejected:** Iterating concepts and querying turns for each.
+**Why:** The obvious version is a textbook N+1: one query for the concepts, then
+one more per concept, so eighteen concepts costs nineteen round trips. It
+returns the right answer, which is exactly why it survives review and then falls
+over later. The naive implementation is kept in `diagnostics.py` as
+`_concept_profile_n_plus_one`, never called, and the offline suite asserts both
+versions return identical numbers. That assertion is what makes the fast version
+trustworthy rather than merely faster.
+
+### An explicit junction table instead of ManyToManyField
+
+**Chose:** A `ProblemConcept` model with a unique index on the pair.
+**Rejected:** peewee's `ManyToManyField`.
+**Why:** The join is written out in the diagnostic query, where it is the most
+important thing to be able to read. A real model can also carry its own columns
+later, weight or primary-versus-incidental, without a migration that changes the
+relationship type. The unique index matters more than it looks: without it a
+reseed silently doubles every link and every count in the diagnostic.
+
+### Foreign keys enforced with a pragma
+
+**Chose:** `foreign_keys: 1` in the SQLite pragmas, with a test asserting a bad
+insert actually raises.
+**Rejected:** Declaring `ForeignKeyField` and assuming.
+**Why:** SQLite does not enforce foreign keys by default, per connection. Every
+`ForeignKeyField` in the schema is documentation rather than a constraint until
+that pragma is set, and orphaned rows accumulate in silence. The test asserts
+the behaviour rather than the declaration, because the declaration was already
+there while the enforcement was not.
+
 ---
 
 ## Still open
@@ -305,6 +364,9 @@ with whoever owns the course before it becomes a design.
 - How accommodations are handled, given that the proctor cannot verify a claim
   made mid-interview and refusing everything that sounds like one is the wrong
   answer. Probably account settings rather than conversation.
+- Whether `Session.solved` should exist at all. Pass/fail is a weak signal at
+  this level and hint depth is the better one, so it may be a column that
+  invites the wrong question.
 - Whether 177 clean adversarial cases means the constraint is robust or the
   attacks are still too easy. Running the red-teamer repeatedly at higher counts
   is the cheapest way to keep testing that.

@@ -90,6 +90,31 @@ resent every turn. Session cost grows with the square of turn count.
 Eight times the turns, twenty-one times the cost. That is why the turn cap
 exists and why drill mode windows history.
 
+## The diagnostic
+
+Hint depth, tagged by concept, is what the schema exists to produce. Pass/fail
+is a weak signal in an intro course because almost everyone eventually passes.
+Needing rung 4 on every dictionary problem and rung 1 on every string problem is
+a profile, and it says something pass/fail cannot.
+
+```
+python -m tools.init_db --demo
+python -m tools.show_profile demo
+```
+
+```
+  concept                turns   avg  max  deep
+  methods                   20  1.85    3     5  #########
+  mutation-vs-return        40  1.75    3     9  #########
+  dict-construction         43  1.56    3     7  ########
+  string-traversal          48   0.6    2     0  ###
+  list-traversal            67  0.57    2     0  ###
+```
+
+Each of those is one grouped join rather than a query per concept. The naive
+N+1 version is kept in `diagnostics.py`, never called, and the offline suite
+asserts both return identical numbers.
+
 ## Security
 
 Students never need an Anthropic account. One key lives in the server's
@@ -209,13 +234,20 @@ rung/                the system itself
   judge.py           two-tier leak detection
   budget.py          session limits and history windowing
   problems.py        loads whichever problem bank is present
+  models.py          peewee schema: students, units, concepts, sessions, turns
+  diagnostics.py     the concept profile, in one query each
 
 evals/               how we know it works
   cases.py           the adversarial suite
   run_evals.py       harness, report, spend
 
-tools/               offline utilities, nothing here calls the API
-  cost_model.py      cost estimates and the funding ceiling
+tools/               utilities
+  cost_model.py      cost estimates and the funding ceiling (offline)
+  init_db.py         create and seed the database (offline)
+  show_profile.py    print a student's diagnostic (offline)
+  check_api.py       API connectivity diagnostic
+  check_judge.py     validate the judge against known verdicts
+  red_team.py        generate attacks the author never wrote
 
 tests/
   test_offline.py    offline checks and secret scan, no API key required

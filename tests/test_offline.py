@@ -14,7 +14,8 @@ import re
 
 from rung.budget import SessionBudget, trim_history
 from evals.cases import CASES, case_count_by_category
-from rung.config import CACHE_MINIMUM_TOKENS, ENABLE_PROMPT_CACHING, MODES, price
+from rung.config import (CACHE_MINIMUM_TOKENS, ENABLE_PROMPT_CACHING, MODES,
+                         RETAIN_TRANSCRIPTS, price)
 from tools.cost_model import session_cost, session_tokens
 from rung.judge import check_code_leak
 from rung.problems import PROBLEMS, SAMPLE_BANK, load_problems
@@ -180,6 +181,99 @@ else:
 check("prompt is still under the Sonnet cache floor (why it stays off)",
       len(prompt) / 4 < CACHE_MINIMUM_TOKENS["claude-sonnet-5"])
 
+print("\nschema")
+from rung.models import (Concept, Problem, ProblemConcept, RubricScore, Session,
+                         Student, Turn, Unit, close_db, database, init_db)
+from rung.diagnostics import (_concept_profile_n_plus_one, class_overview,
+                              concept_profile, session_summary, unit_progress,
+                              weakest_concepts)
+from peewee import IntegrityError
+
+# :memory: means every run starts clean and no test can touch real data.
+init_db(":memory:")
+
+check("all tables created", set(database.get_tables()) >= {
+    "student", "unit", "concept", "problem", "problemconcept",
+    "session", "turn", "rubricscore"})
+
+_unit = Unit.create(number=1, title="Functions")
+_c_str = Concept.create(slug="string-traversal", title="string traversal")
+_c_dict = Concept.create(slug="dict-construction", title="dict construction")
+_p1 = Problem.create(slug="p1", title="p1", unit=_unit, prompt="x", forbidden_insight="y")
+_p2 = Problem.create(slug="p2", title="p2", unit=_unit, prompt="x", forbidden_insight="y")
+ProblemConcept.create(problem=_p1, concept=_c_str)
+ProblemConcept.create(problem=_p2, concept=_c_dict)
+
+# SQLite ignores foreign keys unless the pragma is on, so this asserts the
+# pragma took rather than asserting peewee declared the column.
+try:
+    Session.create(student=9999, problem=_p1, mode="drill", model="m")
+    check("foreign keys are enforced", False)
+except IntegrityError:
+    check("foreign keys are enforced", True)
+
+try:
+    ProblemConcept.create(problem=_p1, concept=_c_str)
+    check("problem-concept pairs are unique", False)
+except IntegrityError:
+    check("problem-concept pairs are unique", True)
+
+_student = Student.create(handle="tester")
+_s1 = Session.create(student=_student, problem=_p1, mode="interview", model="m")
+for i, rung in enumerate([0, 1, 2], start=1):
+    Turn.create(session=_s1, ordinal=i, phase="CODE", rung_used=rung, rung_ceiling=4)
+_s2 = Session.create(student=_student, problem=_p2, mode="interview", model="m")
+for i, rung in enumerate([3, 4, 4], start=1):
+    Turn.create(session=_s2, ordinal=i, phase="CODE", rung_used=rung, rung_ceiling=4)
+
+try:
+    Turn.create(session=_s1, ordinal=1, phase="CODE", rung_used=0, rung_ceiling=4)
+    check("turn ordinals are unique per session", False)
+except IntegrityError:
+    check("turn ordinals are unique per session", True)
+
+check("turn text is null by default (no transcripts stored)",
+      all(t.student_text is None and t.proctor_text is None for t in Turn.select()))
+
+_profile = {row["slug"]: row for row in concept_profile(_student)}
+check("profile covers both concepts", set(_profile) == {"string-traversal", "dict-construction"})
+check("weak concept ranks first", concept_profile(_student)[0]["slug"] == "dict-construction")
+check("avg rung computed correctly", _profile["dict-construction"]["avg_rung"] == 3.67)
+check("max rung computed correctly", _profile["dict-construction"]["max_rung"] == 4)
+check("deep turns counted (rung >= 3)", _profile["dict-construction"]["deep_turns"] == 3)
+check("shallow concept has no deep turns", _profile["string-traversal"]["deep_turns"] == 0)
+check("turns counted per concept", _profile["string-traversal"]["turns"] == 3)
+
+# The point of the single-query version is speed, not a different answer. If it
+# ever disagrees with the naive one, the join is wrong.
+_fast = {r["slug"]: round(r["avg_rung"], 2) for r in concept_profile(_student)}
+_slow = {r["slug"]: round(r["avg_rung"], 2) for r in _concept_profile_n_plus_one(_student)}
+check("single query agrees with the N+1 version", _fast == _slow)
+
+check("min_turns filters thin evidence", weakest_concepts(_student, min_turns=99) == [])
+check("weakest returns the struggling concept",
+      weakest_concepts(_student, min_turns=3)[0]["slug"] == "dict-construction")
+
+_units = unit_progress(_student)
+check("unit progress returns every unit", len(_units) == 1)
+Unit.create(number=2, title="Lists")
+check("units with no sessions still appear",
+      any(u["sessions"] == 0 for u in unit_progress(_student)))
+
+_summary = session_summary(_s2)
+check("session summary counts turns", _summary["turns"] == 3)
+check("session summary finds deepest rung", _summary["deepest_rung"] == 4)
+
+check("class overview aggregates across students", len(class_overview()) == 2)
+
+# CASCADE means deleting a session takes its turns with it, rather than leaving
+# orphans that quietly inflate every future count.
+_before = Turn.select().count()
+_s1.delete_instance(recursive=True)
+check("deleting a session removes its turns", Turn.select().count() == _before - 3)
+
+close_db()
+
 print("\nsecret scan")
 # Matches real key material. The docs contain the literal `sk-ant-...`
 # placeholder, which has no key body, so requiring 20+ trailing key characters
@@ -206,6 +300,8 @@ check("proctor reads the key from the environment",
 gitignore = (here / ".gitignore").read_text()
 check("results are gitignored (they contain student work)", "results/" in gitignore)
 check("private question bank is gitignored", "data/problems.json" in gitignore)
+check("database is gitignored (student performance data)", "data/*.db" in gitignore)
+check("transcript retention is off by default", RETAIN_TRANSCRIPTS is False)
 check(".env is gitignored", ".env" in gitignore)
 
 print(f"\ncase mix: {case_count_by_category()}")

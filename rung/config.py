@@ -64,6 +64,14 @@ MODES = {
     },
 }
 
+# --- data retention ---------------------------------------------------------
+# Off by default. Turns record rung, phase and token counts, which is all the
+# diagnostic needs. Turning this on stores the actual student and proctor text,
+# which means holding a semester of student work in a file on a class server.
+# Useful locally while debugging a prompt; a conversation with the department
+# before it is ever true in a deployment.
+RETAIN_TRANSCRIPTS = False
+
 # --- fairness and abuse limits ----------------------------------------------
 # Not primarily about cost at two cents a drill. Unlimited retries on one
 # problem turns practice into brute forcing, which defeats the point.
