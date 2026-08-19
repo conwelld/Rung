@@ -182,24 +182,36 @@ class Turn(BaseModel):
 class RubricScore(BaseModel):
     """The department's four dimensions, scored at session end.
 
-    Stored as text rather than an enum because the rubric is the department's
-    and may change wording. `score` is 3 for strong hire down to 0 for strong
-    no hire, so it sorts and averages meaningfully.
+    Two rows per dimension: one `self` score from the student, one `proctor`
+    score from the grader. Keeping both is the point. A student who rates their
+    communication a 3 while the proctor rates it a 1 has learned something more
+    useful than either number alone, and calibration is a skill the interview
+    format is partly trying to teach.
+
+    `score` runs 3 for strong hire down to 0 for strong no hire, so it sorts and
+    averages meaningfully. It is nullable because refusing to score is a valid
+    outcome: technical competency cannot be judged without code, and an absent
+    score is more honest than an invented one.
     """
     DIMENSIONS = ("communication", "problem_solving", "technical_competency", "debugging")
     LABELS = {3: "strong hire", 2: "leaning hire", 1: "leaning no hire", 0: "strong no hire"}
+    SOURCES = ("self", "proctor")
 
     id = AutoField()
     session = ForeignKeyField(Session, backref="rubric_scores", on_delete="CASCADE")
     dimension = CharField()
-    score = IntegerField()
+    source = CharField(default="self")
+    score = IntegerField(null=True)
     note = TextField(null=True)
 
     class Meta:
-        indexes = ((("session", "dimension"), True),)
+        # One row per dimension per source. Rescoring updates rather than
+        # appends, so a student changing their mind does not leave both answers
+        # in the table.
+        indexes = ((("session", "dimension", "source"), True),)
 
     def label(self):
-        return self.LABELS.get(self.score, "unscored")
+        return self.LABELS.get(self.score, "not scored")
 
 
 ALL_TABLES = [Student, Unit, Concept, Problem, ProblemConcept,

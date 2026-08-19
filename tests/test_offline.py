@@ -232,8 +232,12 @@ try:
 except IntegrityError:
     check("turn ordinals are unique per session", True)
 
-check("turn text is null by default (no transcripts stored)",
+check("turn text defaults to null in the schema",
       all(t.student_text is None and t.proctor_text is None for t in Turn.select()))
+check("rubric scores carry a source", "self" in RubricScore.SOURCES
+      and "proctor" in RubricScore.SOURCES)
+check("rubric score is nullable (refusing to score is valid)",
+      RubricScore.score.null is True)
 
 _profile = {row["slug"]: row for row in concept_profile(_student)}
 check("profile covers both concepts", set(_profile) == {"string-traversal", "dict-construction"})
@@ -301,7 +305,7 @@ gitignore = (here / ".gitignore").read_text()
 check("results are gitignored (they contain student work)", "results/" in gitignore)
 check("private question bank is gitignored", "data/problems.json" in gitignore)
 check("database is gitignored (student performance data)", "data/*.db" in gitignore)
-check("transcript retention is off by default", RETAIN_TRANSCRIPTS is False)
+check("transcripts do not survive a finished session", RETAIN_TRANSCRIPTS is False)
 check(".env is gitignored", ".env" in gitignore)
 
 print(f"\ncase mix: {case_count_by_category()}")

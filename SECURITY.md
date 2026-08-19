@@ -32,9 +32,15 @@ Rewriting history is a distant second and usually incomplete.
 
 ## Student data
 
-`results/` is gitignored, and the reason is privacy rather than secrets. Once
-this runs live, transcripts contain student work, mistakes, and performance
-data. Treat them accordingly:
+Turn text is stored only while a session is running. It has to be: the API is
+stateless, so those rows are the proctor's memory of the conversation, and the
+grader reads them once at the end. `finish()` then purges them, leaving hint
+depth, phase, token counts and the grade behind. `RETAIN_TRANSCRIPTS` in
+`rung/config.py` keeps them instead, which is a conversation with the
+department rather than a config change.
+
+`results/` and `data/*.db` are gitignored, and the reason is privacy rather than
+secrets. Treat them accordingly:
 
 - Never commit them
 - Store the minimum needed for the concept diagnostic: hint depth per tag, not

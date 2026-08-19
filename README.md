@@ -90,6 +90,50 @@ resent every turn. Session cost grows with the square of turn count.
 Eight times the turns, twenty-one times the cost. That is why the turn cap
 exists and why drill mode windows history.
 
+## Running the app
+
+```
+python -m tools.init_db
+set ANTHROPIC_API_KEY=sk-ant-...
+python -m app.server
+```
+
+Then open http://127.0.0.1:5000. Pick a handle, a mode, and a problem.
+
+The browser never sees the API key, never sees the forbidden insight for the
+problem, and never decides anything. Phase, rung ceiling, remaining time, and
+the turn budget are all computed server-side from stored turns, so a restart
+does not lose an interview and devtools cannot buy extra time.
+
+The editor stays locked until the student states an approach. That is the phase
+gate, and it is the behaviour most worth having: the rubric marks candidates
+down for coding before explaining.
+
+## Grading
+
+The debrief scores the session on the department's four dimensions, twice: once
+by the student, once by the proctor. Both are kept and shown together, because
+the gap between them is often the most useful thing on the page.
+
+One dimension is measured rather than judged. The rubric names "did not require
+any major hints" as a problem-solving signal, so hint depth, turns per phase and
+how far the student got are computed from stored turns and handed to the grader
+as fact.
+
+The grader is allowed to refuse. With no code submitted, technical competency
+comes back unscored rather than inferred from how well the student described a
+plan. Absent and zero are different things and the schema keeps them different.
+
+```
+python -m tools.check_grader
+```
+
+Runs three constructed sessions of known quality through the real grader and
+asserts the scores separate, the full range gets used, the weak session is
+actually marked down, and the no-code case refuses. The failure mode for an LLM
+grader is uniform encouragement, not error: a grader that gives everyone
+"leaning hire" produces a page that looks like feedback and contains none.
+
 ## The diagnostic
 
 Hint depth, tagged by concept, is what the schema exists to produce. Pass/fail
@@ -234,6 +278,7 @@ rung/                the system itself
   judge.py           two-tier leak detection
   budget.py          session limits and history windowing
   problems.py        loads whichever problem bank is present
+  grader.py          rubric scoring from transcript plus measured evidence
   models.py          peewee schema: students, units, concepts, sessions, turns
   diagnostics.py     the concept profile, in one query each
 
@@ -247,12 +292,17 @@ tools/               utilities
   show_profile.py    print a student's diagnostic (offline)
   check_api.py       API connectivity diagnostic
   check_judge.py     validate the judge against known verdicts
+  check_grader.py    validate the grader separates quality
   red_team.py        generate attacks the author never wrote
 
 tests/
   test_offline.py    offline checks and secret scan, no API key required
+  test_app.py        Flask and engine tests with the API stubbed
 
-app/                 (day 5) Flask routes, peewee models, templates, static
+app/                 the web layer
+  engine.py          phase, rung ceiling, budget, persistence per session
+  server.py          Flask routes, rate limiting, quotas
+  templates/         Jinja: picker, interview, debrief, profile
 results/             (gitignored) transcripts, which are student work
 
 DECISIONS.md         every choice made and what was rejected

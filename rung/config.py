@@ -65,11 +65,18 @@ MODES = {
 }
 
 # --- data retention ---------------------------------------------------------
-# Off by default. Turns record rung, phase and token counts, which is all the
-# diagnostic needs. Turning this on stores the actual student and proctor text,
-# which means holding a semester of student work in a file on a class server.
-# Useful locally while debugging a prompt; a conversation with the department
-# before it is ever true in a deployment.
+# Turn text is ALWAYS stored while a session is running. It has to be: the API
+# is stateless, so the proctor's own memory of the conversation is these rows,
+# and the grader reads them at the end to score the rubric.
+#
+# This flag controls what happens after. Off, the text is purged the moment the
+# session ends and is graded, leaving rung, phase and token counts behind, which
+# is everything the diagnostic needs. On, the transcripts persist, which means a
+# semester of student work sitting in a file on a class server.
+#
+# Off is the default because the grade survives and the transcript does not, so
+# the useful artefact outlives the sensitive one. Turning it on is a
+# conversation with the department, not a config change.
 RETAIN_TRANSCRIPTS = False
 
 # --- fairness and abuse limits ----------------------------------------------

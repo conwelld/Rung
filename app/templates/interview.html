@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}{{ state.problem.title }} - Rung{% endblock %}
+{% block nav %}{% endblock %}
+{% block head %}
+<style>
+  .status {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    border: 1px solid var(--line); background: var(--panel);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 16px;
+  }
+  #clock { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 17px; }
+  #clock.low { color: var(--warn); }
+  #clock.out { color: var(--stop); }
+  .phases { display: flex; gap: 6px; }
+  .phase {
+    font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 20px; border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .phase.now { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .phase.done { color: var(--accent); border-color: var(--accent); }
+  #log { display: flex; flex-direction: column; gap: 10px; margin: 0 0 14px; }
+  .msg { padding: 11px 14px; border-radius: 10px; max-width: 88%; }
+  .msg.you { align-self: flex-end; background: #eef2f1; }
+  .msg.proctor { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+  .msg .who { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+              color: var(--muted); margin-bottom: 3px; }
+  .msg .body { white-space: pre-wrap; }
+  .note { font-size: 13px; color: var(--muted); text-align: center; padding: 5px; }
+  .note.err { color: var(--stop); }
+  .composer { display: flex; gap: 9px; align-items: flex-end; }
+  .composer textarea { flex: 1; }
+  .locked {
+    border: 1px dashed var(--line); border-radius: 10px; padding: 12px 14px;
+    color: var(--muted); font-size: 13px; background: #fcfcfd;
+  }
+  .thinking { color: var(--muted); font-size: 13px; padding: 5px; text-align: center; }
+</style>
+{% endblock %}
+{% block body %}
+<div class="status">
+  <span id="clock">--:--</span>
+  <span class="phases">
+    {% for phase in state.phases %}
+    <span class="phase" data-phase="{{ phase }}">{{ phase }}</span>
+    {% endfor %}
+  </span>
+  <span style="flex:1"></span>
+  <span class="small muted"><span id="turns">{{ state.turns }}</span>/{{ state.max_turns }} turns</span>
+  <button class="ghost" id="end">End session</button>
+</div>
+
+<div class="panel" style="margin-bottom:16px">
+  <div class="small muted" style="margin-bottom:6px">{{ state.problem.title }}</div>
+  <div>{{ state.problem.prompt }}</div>
+</div>
+
+<div id="editorArea" class="locked" style="margin-bottom:16px">
+  The editor unlocks once you have talked through your approach. The rubric
+  marks candidates down for coding before explaining, so this is on purpose.
+</div>
+
+<div id="log"></div>
+
+<div class="composer">
+  <textarea id="input" placeholder="Ask a clarifying question to begin..." autofocus></textarea>
+  <button id="send">Send</button>
+</div>
+
+<script>
+  // This script must stay INSIDE the body block. Jinja silently discards
+  // anything a child template puts outside a block, so a script tag placed
+  // after the closing endblock tag never reaches the page: no error, no
+  // warning, just a page where nothing works. That bug shipped once already.
+  // Note: Jinja parses tag syntax even inside a JS comment, so this comment
+  // deliberately spells the tags out in words instead of writing them.
+(function () {
+  "use strict";
+
+  var state = {{ state|tojson }};
+  var log = document.getElementById("log");
+  var input = document.getElementById("input");
+  var send = document.getElementById("send");
+  var clock = document.getElementById("clock");
+  var turnCount = document.getElementById("turns");
+  var editorArea = document.getElementById("editorArea");
+
+  var remaining = state.remaining_seconds;
+  var ended = false;
+  var busy = false;
+
+  function paintPhases(current) {
+    var at = state.phases.indexOf(current);
+    var nodes = document.querySelectorAll(".phase");
+    for (var i = 0; i < nodes.length; i++) {
+      nodes[i].classList.toggle("now", i === at);
+      nodes[i].classList.toggle("done", i < at);
+    }
+  }
+
+  function paintEditor(unlocked) {
+    if (!unlocked || editorArea.dataset.open === "1") return;
+    editorArea.dataset.open = "1";
+    editorArea.className = "panel";
+    editorArea.style.marginBottom = "16px";
+    editorArea.innerHTML =
+      '<div class="small muted" style="margin-bottom:6px">Your code' +
+      ' (stays in this browser, nothing is submitted)</div>' +
+      '<textarea id="code" rows="10" spellcheck="false" ' +
+      'style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px"></textarea>';
+  }
+
+  function addMessage(who, text) {
+    var el = document.createElement("div");
+    el.className = "msg " + (who === "You" ? "you" : "proctor");
+    var head = document.createElement("div");
+    head.className = "who";
+    head.textContent = who;
+    var body = document.createElement("div");
+    body.className = "body";
+    body.textContent = text;
+    el.appendChild(head);
+    el.appendChild(body);
+    log.appendChild(el);
+    el.scrollIntoView({ behavior: "smooth", block: "end" });
+  }
+
+  function addNote(text, isError) {
+    var el = document.createElement("div");
+    el.className = isError ? "note err" : "note";
+    el.textContent = text;
+    log.appendChild(el);
+    el.scrollIntoView({ behavior: "smooth", block: "end" });
+    return el;
+  }
+
+  // The countdown here is decoration. remaining_seconds from the server
+  // overwrites it every turn, and /api/state is polled, so pausing this in
+  // devtools buys no extra time.
+  function tick() {
+    if (ended) return;
+    remaining = Math.max(0, remaining - 1);
+    var m = String(Math.floor(remaining / 60));
+    var s = String(remaining % 60);
+    clock.textContent = (m.length < 2 ? "0" + m : m) + ":" + (s.length < 2 ? "0" + s : s);
+    clock.className = remaining === 0 ? "out" : (remaining < 120 ? "low" : "");
+    if (remaining === 0) finish("time_limit");
+  }
+
+  function submit() {
+    var text = input.value.trim();
+    if (!text || ended || busy) return;
+
+    busy = true;
+    addMessage("You", text);
+    input.value = "";
+    send.disabled = true;
+    input.disabled = true;
+    var pending = addNote("thinking...");
+
+    fetch("/api/turn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        pending.remove();
+        if (data.error) {
+          addNote(data.error, true);
+        } else if (data.ended) {
+          addMessage("Proctor", data.reply);
+          finish(data.stopped_because || "completed");
+        } else {
+          addMessage("Proctor", data.reply);
+          remaining = data.remaining_seconds;
+          turnCount.textContent = data.turns;
+          paintPhases(data.phase);
+          paintEditor(data.editor_unlocked);
+          if (data.advanced) addNote("Moving to " + data.phase);
+        }
+      })
+      .catch(function () {
+        pending.remove();
+        addNote("Could not reach the server. Your message was not sent.", true);
+      })
+      .then(function () {
+        busy = false;
+        if (!ended) {
+          send.disabled = false;
+          input.disabled = false;
+          input.focus();
+        }
+      });
+  }
+
+  function finish(reason) {
+    if (ended) return;
+    ended = true;
+    send.disabled = true;
+    input.disabled = true;
+
+    // Code is sent once, here, rather than stored turn by turn. It is only
+    // needed for grading, and technical competency cannot be scored without it.
+    var editor = document.getElementById("code");
+    var code = editor ? editor.value : "";
+
+    addNote("Grading your session...");
+    fetch("/api/finish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: reason, code: code })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) { if (data.redirect) window.location = data.redirect; })
+      .catch(function () { addNote("Session ended, but the debrief failed to load.", true); });
+  }
+
+  send.addEventListener("click", submit);
+  document.getElementById("end").addEventListener("click", function () {
+    finish("completed");
+  });
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      submit();
+    }
+  });
+
+  setInterval(tick, 1000);
+  tick();
+
+  setInterval(function () {
+    if (ended) return;
+    fetch("/api/state")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) return;
+        remaining = s.remaining_seconds;
+        if (s.ended) finish("time_limit");
+      })
+      .catch(function () { /* transient; the next poll catches up */ });
+  }, 20000);
+
+  paintPhases(state.phase);
+  paintEditor(state.editor_unlocked);
+  addNote("Start by asking anything unclear about the problem.");
+})();
+</script>
+{% endblock %}

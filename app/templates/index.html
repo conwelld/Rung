@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block nav %}{% endblock %}
+{% block body %}
+<h1>Pick a problem</h1>
+<p class="sub">The proctor asks questions. It will not give you the answer, and
+that is the point: how much help you need is what it measures.</p>
+
+<form method="post" action="{{ url_for('start') }}" class="panel">
+  <label class="small muted" for="handle">Your name or handle</label>
+  <input type="text" id="handle" name="handle" value="{{ handle }}" required
+         autocomplete="off" style="margin:6px 0 16px">
+
+  <label class="small muted">Mode</label>
+  <div style="margin:6px 0 16px">
+    {% for name, mode in modes.items() %}
+    <label style="display:block; padding:7px 0">
+      <input type="radio" name="mode" value="{{ name }}"
+             {% if name == 'drill' %}checked{% endif %}>
+      <strong>{{ name }}</strong>
+      <span class="muted small">
+        {{ mode.duration_minutes }} min, up to {{ mode.max_turns }} turns,
+        hints to rung {{ mode.max_rung }}
+        {%- if name == 'drill' %} - short reps on one concept
+        {%- else %} - the full graded interview{% endif %}
+      </span>
+    </label>
+    {% endfor %}
+  </div>
+
+  <label class="small muted">Problem</label>
+  <div style="margin:6px 0 18px">
+  {% for unit in units %}
+    <div style="margin-bottom:12px">
+      <div class="small muted" style="margin-bottom:4px">
+        Unit {{ unit.number }} - {{ unit.title }}
+        {% if unit.week_range %}<span>({{ unit.week_range }})</span>{% endif %}
+      </div>
+      {% for problem in unit.problems %}
+      <label style="display:block; padding:3px 0 3px 12px">
+        <input type="radio" name="problem" value="{{ problem.slug }}" required>
+        {{ problem.title }}
+      </label>
+      {% endfor %}
+    </div>
+  {% endfor %}
+  </div>
+
+  <button type="submit">Start</button>
+</form>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>That is enough for today</h1>
+<p class="sub">You have used all {{ limit }} of your {{ mode }} sessions today.
+Unlimited retries turn practice into guessing, so the cap is deliberate.</p>
+<p><a href="{{ url_for('profile') }}">See what to work on</a> or come back tomorrow.</p>
+{% endblock %}

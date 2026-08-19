@@ -143,10 +143,15 @@ def seed_demo_student(handle="demo", seed=7):
 
         if mode == "interview":
             for dimension in RubricScore.DIMENSIONS:
-                RubricScore.create(
-                    session=session, dimension=dimension,
-                    score=rng.randint(0, 2) if struggling else rng.randint(2, 3),
-                )
+                # Two sources, deliberately mismatched: the fake student rates
+                # themselves higher than the proctor does, which is the gap the
+                # debrief page exists to show.
+                proctor_score = rng.randint(0, 2) if struggling else rng.randint(2, 3)
+                RubricScore.create(session=session, dimension=dimension,
+                                   source="proctor", score=proctor_score,
+                                   note="Seeded example note.")
+                RubricScore.create(session=session, dimension=dimension,
+                                   source="self", score=min(3, proctor_score + 1))
 
     return student
 

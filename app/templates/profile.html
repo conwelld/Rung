@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>{{ student.handle }}</h1>
+<p class="sub">{{ student.sessions.count() }} sessions. How deep in the hint
+ladder you went, grouped by concept. Lower is better.</p>
+
+{% if weakest %}
+<h2>Drill these next</h2>
+<div class="panel">
+  {% for row in weakest %}
+  <div style="padding:6px 0">
+    <strong>{{ row.title }}</strong>
+    <span class="small muted">
+      average rung {{ row.avg_rung }}, {{ row.deep_turns }} deep hint(s)
+      across {{ row.sessions }} session(s)
+    </span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2>Every concept</h2>
+<table>
+  <tr><th>Concept</th><th>Turns</th><th>Avg rung</th><th>Deepest</th><th></th></tr>
+  {% for row in profile %}
+  <tr>
+    <td>{{ row.title }}</td>
+    <td>{{ row.turns }}</td>
+    <td>{{ row.avg_rung }}</td>
+    <td>{{ row.max_rung }}</td>
+    <td style="width:180px">
+      <span class="bar-cell" style="width:{{ (row.avg_rung / 4 * 100)|round }}%"></span>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Units</h2>
+<table>
+  <tr><th>Unit</th><th>Sessions</th><th>Avg rung</th></tr>
+  {% for row in units %}
+  <tr>
+    <td>{{ row.number }}. {{ row.title }}</td>
+    <td>{{ row.sessions or '-' }}</td>
+    <td>{{ row.avg_rung if row.avg_rung is not none else '-' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

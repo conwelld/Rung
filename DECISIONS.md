@@ -349,6 +349,175 @@ that pragma is set, and orphaned rows accumulate in silence. The test asserts
 the behaviour rather than the declaration, because the declaration was already
 there while the enforcement was not.
 
+### The server decides phase advancement, not the model
+
+**Chose:** `advance_phase` from the model is one of three conditions. The server
+also requires a minimum number of turns in the phase, and for APPROACH a stated
+plan of real length.
+**Rejected:** Trusting `advance_phase`.
+**Why:** The model has been asked to be helpful, and a helpful model waves a
+student through CLARIFY in one turn and accepts "idk" as an approach. The phase
+gate is the single most valuable behaviour in the tool, because the rubric
+penalises coding without explaining, so it cannot rest on a field the model
+fills in. The test stub says `advance_phase: true` on every single turn, which
+means every phase-gate test is really testing the server rather than the model.
+**Cost:** A student with a genuinely terse but correct plan gets held an extra
+turn. Cheap compared to the gate being decorative.
+
+### An engine layer between routes and the proctor
+
+**Chose:** `app/engine.py` owns phase, rung ceiling, budget, and persistence.
+Routes do HTTP. `rung/proctor.py` does one API call.
+**Rejected:** Putting session logic in the route handlers.
+**Why:** The rules that make this an interview rather than a chat window are the
+part worth testing, and they should not be reachable only through an HTTP
+request. The engine is exercised directly in tests with no client at all, and
+the same code runs under Flask.
+**Cost:** One more file, and a small temptation to let logic drift into routes
+that has to be resisted.
+
+### Session state is rebuilt from the database every request
+
+**Chose:** Nothing held in memory between requests. The budget is reconstructed
+from stored turns; the cookie holds a session id and a handle.
+**Rejected:** Keeping live session objects in a process-level dict.
+**Why:** In-memory state means a restart drops every interview in progress, two
+workers disagree about whose turn it is, and the limits become resettable by
+whoever can make the process forget. Rebuilding costs one indexed query and the
+limit then survives a restart, which is what makes it a limit.
+**Cost:** A query per turn. Irrelevant next to an API call taking a second.
+
+### The timer is server-side, the countdown is decoration
+
+**Chose:** `remaining_seconds` computed from `started_at` on the server, sent on
+every turn and polled every 20 seconds.
+**Rejected:** A JavaScript countdown as the clock.
+**Why:** A client-side timer can be paused from the devtools console, and the
+users are CS students. The visible countdown exists so the page feels alive; the
+server's number is the one that ends the session.
+**Cost:** A poll every 20 seconds per active session. One row read, no model
+call.
+
+### In-process rate limiting, with the limitation written down
+
+**Chose:** A per-handle deque in the Flask process.
+**Rejected:** Redis. Also rejected pretending it is not a limitation.
+**Why:** Correct for one worker, which is what this runs as, and it adds no
+infrastructure to a project a department has to maintain. Multiple workers would
+each keep their own counter, so the effective limit multiplies. The comment in
+`app/server.py` says so, because the wrong fix is not choosing Redis early, it
+is shipping a limit that quietly does not hold and never saying so.
+
+### The API is stubbed in tests, deliberately
+
+**Chose:** `tests/test_app.py` replaces `ask_proctor` with a stub.
+**Rejected:** Testing routes against the real API.
+**Why:** Everything under test here is code I wrote: the phase gate, the turn
+cap, the ceiling per mode, transcript retention, cookie ownership, quotas, rate
+limits. Running these against the real API would be slow, would cost money per
+run, and would mostly test the model. Whether the proctor holds the line is a
+separate question, answered by `evals/`, which does call the real API.
+
+### Testing that templates actually rendered what they contain
+
+**Chose:** Assert the interview page contains its script tag, its injected
+state, and its event handlers, and fetch every other template through a real
+request.
+**Rejected:** Trusting that a template file containing JavaScript serves a page
+containing JavaScript.
+**Why:** Jinja discards anything a child template places outside a block. No
+error, no warning. The first version of the interview page had its script
+appended after the closing block tag, so the page rendered perfectly, looked
+correct in a browser, and had zero JavaScript on it. The timer sat at --:-- and
+the Send button did nothing. Every existing test passed, because they all
+checked status codes and the presence of the problem prompt, which were fine.
+The second version then failed to compile because the fix comment wrote Jinja
+tag syntax inside a JavaScript comment, and Jinja parses tags wherever they
+appear. Two failures from the same misunderstanding: a template is a program,
+not a text file with holes in it.
+**Cost:** Tests that assert on page content are more brittle than tests that
+assert on status codes. That brittleness is the point here.
+
+### Both scores are kept, not just the proctor's
+
+**Chose:** Two rows per dimension, `self` and `proctor`, shown side by side with
+the gap called out.
+**Rejected:** Replacing self-scoring with proctor scoring.
+**Why:** A student who rates their communication a 3 against the proctor's 1 has
+learned something neither number says alone. Calibration is part of what the
+interview format teaches, and it disappears the moment the tool just hands down
+a verdict. The debrief asks them to self-score first, then shows the comparison.
+**Cost:** A more complicated schema and a page with more on it than a single
+grade would need.
+
+### Behavioural evidence is supplied to the grader as fact
+
+**Chose:** Hint depth, turns per phase, phase reached, and duration are computed
+and handed to the grader alongside the transcript, with the problem-solving
+dimension told to weight hint depth heavily.
+**Rejected:** Giving the model the transcript and asking for four scores.
+**Why:** The department rubric names "did not require any major hints" as an
+explicit problem-solving signal, so the tool already measures one dimension
+directly. Passing that as a fact rather than letting the model infer it from the
+conversation grounds at least one score in something that is not an impression.
+It also means the grade cannot contradict the diagnostic.
+**Cost:** A longer prompt, and the grader's judgement on the other dimensions
+is still a model's judgement.
+
+### The grader may refuse to score
+
+**Chose:** Null for technical competency when no code is submitted, and null for
+debugging when the session never got there. A null is not stored as a row.
+**Rejected:** Scoring every dimension every time.
+**Why:** Technical competency is about code. Scoring it from how well a student
+described a plan would produce a confident number with nothing behind it, which
+is worse than an absent one because it looks like information. A null is also
+different from a zero, and the schema keeps them different: absent means not
+assessed, zero means assessed and absent.
+**Cost:** A debrief page that sometimes says "not scored", which looks less
+finished and is more honest.
+
+### Validating the grader for sycophancy, not accuracy
+
+**Chose:** `tools/check_grader.py` runs three constructed sessions of known
+quality and asserts the scores separate, that the range is used, that the weak
+session scores at most 1, and that the no-code case returns null.
+**Rejected:** Spot-checking a few grades by eye.
+**Why:** The failure mode for an LLM grader is not being wrong, it is being
+uniformly encouraging. A grader that hands everyone "leaning hire" produces a
+page that looks like feedback and contains none, and it passes any test that
+only checks the endpoint returned something. Separation is testable; accuracy on
+a single session is not.
+**Cost:** Three fixture sessions to maintain, and a few cents per run.
+
+### Transcripts are working memory, not a record
+
+**Chose:** Turn text is always stored while a session runs, then purged when the
+session ends and is graded, unless `RETAIN_TRANSCRIPTS` is on.
+**Rejected:** Never storing text. Also rejected storing it permanently.
+**Why:** Never storing it was the previous design and it was quietly broken: the
+API is stateless, so those rows are the proctor's only memory of the
+conversation, and without them it saw one message at a time and could not hold
+an interview. Storing it permanently means a semester of student work, mistakes
+included, in a file on a class server.
+Purging at the end gets both. The proctor has full context while it matters, the
+grader reads the transcript once at the moment it is useful, and what survives
+is the grade and the hint-depth data. The useful artefact outlives the sensitive
+one.
+**Cost:** A session cannot be re-graded or reviewed after the fact. That is the
+trade, and it is the right way round: a grade you can reread is worth more than
+a transcript you have to protect.
+
+### A grading failure does not fail the session
+
+**Chose:** The session closes, then grading is attempted, and an exception is
+swallowed. The debrief renders with self-scores and a note.
+**Rejected:** Letting a grading error propagate.
+**Why:** Grading is the last thing that happens, after the interview is already
+over and the hint-depth data is already stored. An API hiccup at that moment
+should not leave a session open forever or lose thirty minutes of a student's
+work. Tested with a grader that raises.
+
 ---
 
 ## Still open
@@ -364,6 +533,12 @@ there while the enforcement was not.
 - How accommodations are handled, given that the proctor cannot verify a claim
   made mid-interview and refusing everything that sounds like one is the wrong
   answer. Probably account settings rather than conversation.
+- Whether the editor should run code. Right now it is a plain textarea kept in
+  the browser. CodeMirror plus Pyodide would make it a real editor with tests,
+  and would also mean deciding what happens to code the student writes.
+- Whether the grader should see the hint-depth evidence for dimensions other
+  than problem solving. It currently sees all of it, which may be anchoring
+  communication and debugging scores to how much help the student needed.
 - Whether `Session.solved` should exist at all. Pass/fail is a weak signal at
   this level and hint depth is the better one, so it may be a column that
   invites the wrong question.

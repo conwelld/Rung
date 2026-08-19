@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block head %}
+<style>
+  .dim { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .dim:last-child { border-bottom: none; }
+  .dim .name { font-weight: 600; margin-bottom: 3px; }
+  .verdict { display: inline-block; font-size: 12px; padding: 2px 9px;
+             border-radius: 20px; border: 1px solid var(--line); }
+  .v3 { background: #eaf3ef; border-color: #b9d8cb; color: #1f5a42; }
+  .v2 { background: #f0f4ea; border-color: #cfe0bc; color: #47632c; }
+  .v1 { background: #fbf2e6; border-color: #e8d3ae; color: var(--warn); }
+  .v0 { background: #fbecec; border-color: #e8bcbc; color: var(--stop); }
+  .vnone { color: var(--muted); }
+  .note { color: var(--ink); font-size: 14px; margin-top: 6px; }
+  .selfrow { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line); }
+  .gap { color: var(--warn); font-size: 13px; margin-top: 5px; }
+</style>
+{% endblock %}
+{% block body %}
+<h1>Session debrief</h1>
+<p class="sub">{{ session.problem.title }} - {{ session.mode }} mode
+  {%- if session.stopped_because %}, ended on {{ session.stopped_because.replace('_', ' ') }}{% endif %}</p>
+
+<div class="panel" style="margin-bottom:22px">
+  <table>
+    <tr><td>Turns</td><td>{{ summary.turns }}</td></tr>
+    <tr><td>Deepest hint needed</td>
+        <td>rung {{ summary.deepest_rung if summary.deepest_rung is not none else '-' }} of 4</td></tr>
+    <tr><td>Average hint depth</td>
+        <td>{{ summary.avg_rung if summary.avg_rung is not none else '-' }}</td></tr>
+    <tr><td>Phase reached</td><td>{{ session.phase_reached }}</td></tr>
+    {% if summary.duration_minutes %}
+    <tr><td>Duration</td><td>{{ '%.1f'|format(summary.duration_minutes) }} min</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+{% if proctor %}
+<h2>How the proctor scored you</h2>
+<p class="small muted" style="margin-top:-4px">
+  The department's four dimensions. Hint depth is measured rather than judged,
+  so problem solving rests on what actually happened, not an impression.
+</p>
+<div class="panel" id="graded">
+  {% for dimension in dimensions %}
+  {% set row = proctor.get(dimension) %}
+  <div class="dim">
+    <div class="name">{{ dimension.replace('_', ' ')|title }}</div>
+    {% if row and row.score is not none %}
+      <span class="verdict v{{ row.score }}">{{ labels[row.score] }}</span>
+    {% else %}
+      <span class="verdict vnone">not scored</span>
+    {% endif %}
+    {% if row and row.note %}<div class="note">{{ row.note }}</div>{% endif %}
+
+    {% if scored.get(dimension) is not none %}
+    <div class="selfrow small muted">
+      You rated yourself: {{ labels[scored[dimension]] }}
+      {% if row and row.score is not none and scored[dimension] != row.score %}
+        <div class="gap">
+          {% if scored[dimension] > row.score %}
+            You rated yourself higher than the proctor did here. Worth reading
+            the note again.
+          {% else %}
+            You were harder on yourself than the proctor was.
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel" style="margin-bottom:22px">
+  <div class="muted small">No proctor grade for this session. Grading runs when
+  a session ends and can fail if the API is unreachable; the session and the
+  hint-depth data are unaffected.</div>
+</div>
+{% endif %}
+
+<h2>Score yourself</h2>
+<p class="small muted" style="margin-top:-4px">
+  Do this before reading the grades above if you can. The gap between your own
+  assessment and the proctor's is worth as much as either score alone.
+</p>
+<div class="panel" id="rubric">
+  {% for dimension in dimensions %}
+  <div style="padding:9px 0; border-bottom:1px solid var(--line)">
+    <div style="margin-bottom:6px">{{ dimension.replace('_', ' ')|title }}</div>
+    {% for value in [3, 2, 1, 0] %}
+    <label class="small" style="margin-right:14px">
+      <input type="radio" name="{{ dimension }}" value="{{ value }}"
+             {% if scored.get(dimension) == value %}checked{% endif %}> {{ labels[value] }}
+    </label>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <div style="padding-top:12px">
+    <button id="saveRubric">Save</button>
+    <span class="small muted" id="saved" style="margin-left:10px"></span>
+  </div>
+</div>
+
+<p style="margin-top:24px">
+  <a href="{{ url_for('profile') }}">What to work on next</a> &middot;
+  <a href="{{ url_for('index') }}">Another problem</a>
+</p>
+
+<script>
+document.getElementById("saveRubric").addEventListener("click", function () {
+  var scores = {};
+  var checked = document.querySelectorAll("#rubric input[type=radio]:checked");
+  for (var i = 0; i < checked.length; i++) scores[checked[i].name] = checked[i].value;
+  fetch("/api/rubric", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scores: scores })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      document.getElementById("saved").textContent =
+        d.saved ? "Saved. Reload to compare against the proctor." : "Nothing selected.";
+    })
+    .catch(function () {
+      document.getElementById("saved").textContent = "Could not save.";
+    });
+});
+</script>
+{% endblock %}
