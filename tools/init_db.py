@@ -11,12 +11,15 @@ from the bank rather than maintained separately, so there is one source of truth
 """
 
 import argparse
+import datetime
+import os
 import random
 import sys
 
 from rung.models import (
     ALL_TABLES, Concept, Problem, ProblemConcept, RubricScore, Session,
-    Student, Turn, Unit, close_db, database, init_db,
+    Student, Turn, Unit, add_missing_columns, close_db, database, describe_db,
+    init_db,
 )
 from rung.problems import BANK_SOURCE, PROBLEMS
 
@@ -52,23 +55,39 @@ def seed_concepts():
 
 
 def seed_problems():
+    # The selected bank is authoritative. Switching from the public sample to a
+    # private course bank must not leave sample-only rows visible, while old
+    # session foreign keys still require those rows to remain in the database.
+    active_slugs = list(PROBLEMS)
+    Problem.update(active=False).where(
+        Problem.slug.not_in(active_slugs)).execute()
+
     for slug, data in PROBLEMS.items():
         unit = Unit.get(Unit.number == data["unit"])
         Problem.insert(
             slug=slug, title=data["title"], unit=unit,
             prompt=data["prompt"], forbidden_insight=data["forbidden_insight"],
+            active=True,
         ).on_conflict(
             conflict_target=[Problem.slug],
             update={
                 Problem.title: data["title"], Problem.unit: unit,
                 Problem.prompt: data["prompt"],
                 Problem.forbidden_insight: data["forbidden_insight"],
+                Problem.active: True,
             },
         ).execute()
 
         problem = Problem.get(Problem.slug == slug)
-        for concept_slug in data["concepts"]:
-            concept = Concept.get(Concept.slug == concept_slug)
+        wanted_concepts = [
+            Concept.get(Concept.slug == concept_slug)
+            for concept_slug in data["concepts"]
+        ]
+        ProblemConcept.delete().where(
+            (ProblemConcept.problem == problem)
+            & ProblemConcept.concept.not_in([c.id for c in wanted_concepts])
+        ).execute()
+        for concept in wanted_concepts:
             # The unique index on (problem, concept) turns a reseed into a
             # no-op instead of doubling every count in the diagnostic.
             ProblemConcept.insert(problem=problem, concept=concept).on_conflict_ignore().execute()
@@ -104,14 +123,22 @@ def seed_demo_student(handle="demo", seed=7):
         concepts = {link.concept.slug for link in problem.concept_links}
         struggling = bool(concepts & weak)
         ceiling = 4 if mode == "interview" else 2
+        stopped_because = ("completed" if not struggling else
+                           rng.choice(["turn_limit", "time_limit", "completed"]))
 
+        # Solved means the checks passed, so a problem without checks cannot
+        # be solved. The draw still happens either way: skipping it would shift
+        # every later random value and change the demo profile the README shows.
+        checks = len(PROBLEMS.get(problem.slug, {}).get("tests") or [])
+        solved = rng.random() > (0.45 if struggling else 0.1)
         session = Session.create(
             student=student, problem=problem, mode=mode,
             model="claude-sonnet-5" if mode == "interview" else "claude-haiku-4-5",
-            stopped_because="completed" if not struggling else
-                            rng.choice(["turn_limit", "time_limit", "completed"]),
+            stopped_because=stopped_because,
             phase_reached="DEBUG" if mode == "interview" else "CODE",
-            solved=rng.random() > (0.45 if struggling else 0.1),
+            solved=solved if checks else None,
+            check_results=("1" * checks if solved else "0" + "1" * (checks - 1))
+                          if checks else None,
         )
 
         turns = rng.randint(9, 16) if mode == "interview" else rng.randint(4, 7)
@@ -139,6 +166,8 @@ def seed_demo_student(handle="demo", seed=7):
 
         session.input_tokens = sum(t.input_tokens for t in session.turns)
         session.output_tokens = sum(t.output_tokens for t in session.turns)
+        # A finished session, so the picker counts it as practiced.
+        session.ended_at = session.started_at + datetime.timedelta(minutes=turns)
         session.save()
 
         if mode == "interview":
@@ -158,7 +187,9 @@ def seed_demo_student(handle="demo", seed=7):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--path", default="data/rung.db")
+    # DATABASE_URL first, the same variable the server reads, so seeding
+    # Supabase never needs its password typed on a command line.
+    parser.add_argument("--path", default=os.environ.get("DATABASE_URL") or "data/rung.db")
     parser.add_argument("--demo", action="store_true",
                         help="add a fake student so the diagnostic has data")
     parser.add_argument("--reset", action="store_true",
@@ -172,6 +203,7 @@ def main():
         database.drop_tables(ALL_TABLES, safe=True)
 
     database.create_tables(ALL_TABLES)
+    add_missing_columns()
 
     with database.atomic():
         # One transaction. A half-seeded database is worse than no database,
@@ -192,8 +224,10 @@ def main():
         print(f"  demo      {student.handle}: {student.sessions.count()} sessions, "
               f"{Turn.select().join(Session).where(Session.student == student).count()} turns")
 
-    print(f"\n  database -> {args.path}")
-    print("  next:  python -m tools.show_profile demo")
+    # Never print a database URL as given: it carries the password.
+    print(f"\n  database -> {describe_db(args.path)}")
+    if args.demo:
+        print("  next:  python -m tools.show_profile demo")
     close_db()
     return 0
 

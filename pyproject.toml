@@ -1,0 +1,21 @@
+# Read by Vercel. Elastic Beanstalk, Render and CI install from
+# requirements.txt instead; tests/test_offline.py fails if the two dependency
+# lists drift apart.
+
+[project]
+name = "rung"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.32.0,<3",
+    "peewee>=3.17.0,<5",
+    "flask>=3.1.0,<4",
+    "gunicorn>=23.0.0,<24",
+    "psycopg[binary]>=3.2.0,<4",
+    "tzdata>=2024.1",
+]
+
+[tool.vercel]
+# wsgi.py rather than app/server.py: both define `app`, and Vercel would
+# otherwise pick one by its own search order.
+entrypoint = "wsgi:app"

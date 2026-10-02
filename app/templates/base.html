@@ -1,65 +1,45 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Rung{% endblock %}</title>
-<style>
-  :root {
-    --ink: #16181d; --muted: #6b7280; --line: #e3e5e9;
-    --bg: #fbfbfc; --panel: #fff; --accent: #2f5d50;
-    --warn: #8a5a00; --stop: #a03030;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  .wrap { max-width: 860px; margin: 0 auto; padding: 28px 20px 64px; }
-  header.bar {
-    border-bottom: 1px solid var(--line); background: var(--panel);
-    position: sticky; top: 0; z-index: 10;
-  }
-  header.bar .wrap { padding: 12px 20px; display: flex; align-items: baseline; gap: 16px; }
-  .brand { font-weight: 650; letter-spacing: -0.01em; }
-  .brand span { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
-  .spacer { flex: 1; }
-  a { color: var(--accent); }
-  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
-  h2 { font-size: 15px; margin: 28px 0 10px; }
-  .sub { color: var(--muted); margin: 0 0 24px; }
-  .panel {
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: 10px; padding: 18px;
-  }
-  .muted { color: var(--muted); }
-  .small { font-size: 13px; }
-  button, .btn {
-    font: inherit; padding: 8px 15px; border-radius: 7px; cursor: pointer;
-    border: 1px solid var(--accent); background: var(--accent); color: #fff;
-  }
-  button.ghost { background: transparent; color: var(--accent); }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  input[type=text], select, textarea {
-    font: inherit; padding: 8px 10px; border: 1px solid var(--line);
-    border-radius: 7px; background: #fff; width: 100%;
-  }
-  textarea { resize: vertical; min-height: 74px; }
-  table { border-collapse: collapse; width: 100%; font-size: 14px; }
-  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
-  th { font-weight: 600; color: var(--muted); font-size: 12px;
-       text-transform: uppercase; letter-spacing: .04em; }
-  .bar-cell { background: var(--accent); height: 9px; border-radius: 3px; display: block; }
-</style>
-{% block head %}{% endblock %}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Rung is a Socratic coding interview coach that measures how much help a student needs, then turns that evidence into focused practice.">
+  <meta name="theme-color" content="#176b54">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Rung · Socratic coding interview practice">
+  <meta property="og:description" content="Practice the interview, not the answer. Socratic prompts, measured hint depth, and focused next reps.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Rung · Socratic coding interview practice">
+  <meta name="twitter:description" content="Practice the interview, not the answer. Socratic prompts, measured hint depth, and focused next reps.">
+  {% if public_origin %}
+  <meta property="og:url" content="{{ public_origin }}{{ request.path }}">
+  <meta property="og:image" content="{{ public_origin }}{{ url_for('static', filename='og.png') }}">
+  <meta name="twitter:image" content="{{ public_origin }}{{ url_for('static', filename='og.png') }}">
+  {% endif %}
+  <title>{% block title %}Rung · Socratic coding interview practice{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='rung.css') }}">
+  {% block head %}{% endblock %}
 </head>
 <body>
-<header class="bar"><div class="wrap">
-  <span class="brand">Rung<span>mock interview proctor</span></span>
-  <span class="spacer"></span>
-  {% block nav %}<a class="small" href="{{ url_for('index') }}">problems</a>
-  <a class="small" href="{{ url_for('profile') }}">my profile</a>{% endblock %}
-</div></header>
-<div class="wrap">{% block body %}{% endblock %}</div>
+  <header class="site-header">
+    <nav class="container nav" aria-label="Primary navigation">
+      <a class="brand" href="{{ url_for('index') }}" aria-label="Rung home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Rung</span>
+      </a>
+      <div class="nav-links">
+        {% block nav %}
+          <a href="{{ url_for('index') }}">Practice</a>
+          <a href="{{ url_for('profile') }}">My progress</a>
+          {% if instructor_enabled %}
+            <a href="{{ url_for('instructor') }}">Instructor</a>
+          {% endif %}
+        {% endblock %}
+      </div>
+    </nav>
+  </header>
+  <main class="container page">
+    {% block body %}{% endblock %}
+  </main>
 </body>
 </html>

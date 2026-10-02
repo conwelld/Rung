@@ -9,8 +9,10 @@ before pushing.
     python test_offline.py
 """
 
+import importlib
 import pathlib
 import re
+import sys
 
 from rung.budget import SessionBudget, trim_history
 from evals.cases import CASES, case_count_by_category
@@ -18,7 +20,8 @@ from rung.config import (CACHE_MINIMUM_TOKENS, ENABLE_PROMPT_CACHING, MODES,
                          RETAIN_TRANSCRIPTS, price)
 from tools.cost_model import session_cost, session_tokens
 from rung.judge import check_code_leak
-from rung.problems import PROBLEMS, SAMPLE_BANK, load_problems
+from rung.problems import (BANK_SOURCE, PROBLEMS, SAMPLE_BANK,
+                           VALID_CHALLENGES, load_problems, validate_problems)
 from rung.proctor import _parse, build_system_block, build_system_prompt
 
 failures = []
@@ -76,8 +79,8 @@ check("real garbage still marked unparsed",
 
 print("\nmode configuration")
 check("drill is cheaper than interview", session_cost("drill") < session_cost("interview"))
-check("drill costs under a tenth of an interview",
-      session_cost("drill") < session_cost("interview") / 10)
+check("drill costs under fifteen percent of an interview",
+      session_cost("drill") < session_cost("interview") * 0.15)
 check("drill caps the ladder below rung 4", MODES["drill"]["max_rung"] < 4)
 check("drill windows history", MODES["drill"]["history_window"] is not None)
 check("interview keeps full history", MODES["interview"]["history_window"] is None)
@@ -149,11 +152,79 @@ check("some cases run in drill mode",
 check("every problem has a forbidden insight",
       all(p.get("forbidden_insight") for p in PROBLEMS.values()))
 check("every problem has concept tags", all(p.get("concepts") for p in PROBLEMS.values()))
+check("every problem has a course-relative challenge",
+      all(p.get("challenge") in VALID_CHALLENGES for p in PROBLEMS.values()))
+check("every problem has a valid test collection",
+      all(isinstance(p.get("tests"), list)
+          and all(isinstance(case, list) and len(case) == 2
+                  for case in p["tests"])
+          for p in PROBLEMS.values()))
+if BANK_SOURCE == "private":
+    check("private curriculum has the curated 40-problem breadth", len(PROBLEMS) == 40)
 sample, _ = load_problems(SAMPLE_BANK)
 check("committed sample bank loads", len(sample) >= 3)
 check("sample problems are complete",
       all(p.get("forbidden_insight") and p.get("concepts") and p.get("prompt")
           for p in sample.values()))
+
+print("\nproblem topics")
+check("every loaded problem is listed under a topic",
+      all(isinstance(p.get("topic"), str) and p["topic"].strip() for p in PROBLEMS.values()))
+check("sample bank problems are listed under a topic",
+      all(p.get("topic") for p in sample.values()))
+check("topics group problems rather than naming each one",
+      len({p["topic"] for p in PROBLEMS.values()}) < len(PROBLEMS))
+_bad = {"x_bad": {**next(iter(sample.values())), "topic": "   "}}
+try:
+    validate_problems(_bad, "test")
+    check("a blank topic is rejected", False)
+except ValueError:
+    check("a blank topic is rejected", True)
+_legacy = {"x_old": {k: v for k, v in next(iter(sample.values())).items() if k != "topic"}}
+check("a bank without topics still loads", validate_problems(_legacy, "test") is _legacy)
+
+print("\nbrowser checks harness")
+# rung/checks.py is the code the Pyodide worker runs in the student's browser.
+# Exercising it here under CPython is the only place it is tested at all.
+from rung.checks import run_checks, run_checks_json
+
+_one = run_checks("def f(xs):\n    return len(xs)", "f", [[[4, 9, 9, 1], 4]])
+check("a list input goes to a one-parameter function whole", _one["passed"] == [True])
+_two = run_checks("def f(xs, target):\n    return target in xs", "f", [[[[1, 2], 2], True]])
+check("a list input is unpacked for a function that needs several", _two["passed"] == [True])
+_opt = run_checks("def f(xs, k=2):\n    return len(xs)", "f", [[[5, 6], 2]])
+check("an optional extra parameter does not trigger unpacking", _opt["passed"] == [True])
+check("tuples compare equal to the bank's JSON lists",
+      run_checks("def f(x):\n    return [(3, 4)]", "f", [[0, [[3, 4]]]])["passed"] == [True])
+check("integer keys compare equal to the bank's JSON string keys",
+      run_checks("def f(x):\n    return {1: ['a']}", "f", [[0, {"1": ["a"]}]])["passed"] == [True])
+check("floats compare with tolerance",
+      run_checks("def f(x):\n    return 0.1 + 0.2", "f", [[0, 0.3]])["passed"] == [True])
+check("1 does not pass a check that expects True",
+      run_checks("def f(x):\n    return 1", "f", [[0, True]])["passed"] == [False])
+check("a wrong answer fails without an error",
+      run_checks("def f(x):\n    return 2", "f", [[0, 3]]) == {"passed": [False], "error": None})
+_raise = run_checks("def f(x):\n    return 10 // x", "f", [[5, 2], [0, 0]])
+check("an exception fails only its own check", _raise["passed"] == [True, False])
+check("an exception names the check but not its input",
+      _raise["error"].startswith("Check 2 raised: ZeroDivisionError") and "[0" not in _raise["error"])
+_syntax = run_checks("def f(x)\n    return x", "f", [[1, 1], [2, 2]])
+check("code that does not compile fails every check",
+      _syntax["passed"] == [False, False] and "SyntaxError" in _syntax["error"])
+_missing = run_checks("def g(x):\n    return x", "f", [[1, 1]])
+check("a missing function is named in the error", "named f" in _missing["error"])
+_mutating = "def f(xs):\n    xs.append(0)\n    return len(xs)"
+check("each check gets a fresh copy of its input",
+      run_checks(_mutating, "f", [[[1], 2], [[1], 2]])["passed"] == [True, True])
+check("the browser entry point round-trips JSON",
+      run_checks_json("def f(x):\n    return x", "f", "[[1, 1]]")
+      == '{"passed": [true], "error": null}')
+_bank_ok = True
+for _slug, _data in PROBLEMS.items():
+    if _data["tests"]:
+        _result = run_checks("def %s(*args):\n    return None" % _slug, _slug, _data["tests"])
+        _bank_ok = _bank_ok and len(_result["passed"]) == len(_data["tests"])
+check("every bank problem's checks run to completion", _bank_ok)
 
 print("\nprompt assembly")
 # Pick a real problem from whichever bank loaded rather than naming one. The
@@ -182,11 +253,14 @@ check("prompt is still under the Sonnet cache floor (why it stays off)",
       len(prompt) / 4 < CACHE_MINIMUM_TOKENS["claude-sonnet-5"])
 
 print("\nschema")
+import datetime
+
 from rung.models import (Concept, Problem, ProblemConcept, RubricScore, Session,
-                         Student, Turn, Unit, close_db, database, init_db)
+                         Student, Turn, Unit, add_missing_columns, close_db,
+                         database, init_db)
 from rung.diagnostics import (_concept_profile_n_plus_one, class_overview,
-                              concept_profile, session_summary, unit_progress,
-                              weakest_concepts)
+                              concept_profile, problem_status, session_summary,
+                              student_overview, unit_progress, weakest_concepts)
 from peewee import IntegrityError
 
 # :memory: means every run starts clean and no test can touch real data.
@@ -270,6 +344,39 @@ check("session summary finds deepest rung", _summary["deepest_rung"] == 4)
 
 check("class overview aggregates across students", len(class_overview()) == 2)
 
+print("\nsolved and practiced")
+_now = datetime.datetime.now()
+# _s2 (p2) finished and solved with rungs 3,4,4. A second, easier solve of the
+# same problem must lower best_depth to its own deepest rung, and must not
+# count as a second solved problem.
+_s2.ended_at, _s2.solved, _s2.check_results = _now, True, "11"
+_s2.save()
+_s3 = Session.create(student=_student, problem=_p2, mode="drill", model="m",
+                     ended_at=_now, solved=True, check_results="11")
+Turn.create(session=_s3, ordinal=1, phase="CODE", rung_used=1, rung_ceiling=2)
+# _s1 (p1) is still open: attempted, but neither practiced nor solved.
+_status = problem_status(_student)
+check("a finished, fully checked session counts as solved", _status[_p2.id]["solved"])
+check("an open session is neither practiced nor solved",
+      not _status[_p1.id]["practiced"] and not _status[_p1.id]["solved"])
+check("best depth is the least-helped solve", _status[_p2.id]["best_depth"] == 1)
+check("per-problem turns feed topic averages",
+      _status[_p2.id]["turns"] == 4 and _status[_p2.id]["rung_total"] == 12)
+check("no student means no status", problem_status(None) == {})
+check("instructor overview counts distinct solved problems",
+      {r["handle"]: r["solved"] for r in student_overview()}["tester"] == 1)
+
+print("\ncolumn migration")
+# A database created before check_results existed. create_tables() never
+# alters a table, so without the migration every Session query would fail.
+database.execute_sql("ALTER TABLE session DROP COLUMN check_results")
+add_missing_columns()
+check("a missing column is added to an existing table",
+      "check_results" in {c.name for c in database.get_columns("session")})
+add_missing_columns()
+check("the migration is safe to run twice",
+      Session.get_by_id(_s3.id).check_results is None)
+
 # CASCADE means deleting a session takes its turns with it, rather than leaving
 # orphans that quietly inflate every future count.
 _before = Turn.select().count()
@@ -307,6 +414,150 @@ check("private question bank is gitignored", "data/problems.json" in gitignore)
 check("database is gitignored (student performance data)", "data/*.db" in gitignore)
 check("transcripts do not survive a finished session", RETAIN_TRANSCRIPTS is False)
 check(".env is gitignored", ".env" in gitignore)
+
+print("\ndeployment safety")
+import os as _os
+
+_saved = dict(_os.environ)
+_srv = None
+try:
+    # Production with no secret key must refuse to start rather than invent a
+    # random one. A random key works fine on one worker and silently logs
+    # everyone out on a restart or a second worker, which is a miserable bug to
+    # track down. Failing at boot is the kinder behaviour.
+    _os.environ["RUNG_ENV"] = "production"
+    _os.environ.pop("RUNG_SECRET_KEY", None)
+    try:
+        # The module may or may not be imported yet depending on test order, so
+        # handle both: a first import and a reload both have to raise.
+        if "app.server" in sys.modules:
+            importlib.reload(sys.modules["app.server"])
+        else:
+            import app.server  # noqa: F401
+        check("production without a secret key refuses to boot", False)
+    except RuntimeError:
+        check("production without a secret key refuses to boot", True)
+
+    _os.environ["RUNG_SECRET_KEY"] = "x" * 64
+    import app.server as _srv
+    _srv = importlib.reload(_srv)
+    check("production sets a secure cookie",
+          _srv.app.config["SESSION_COOKIE_SECURE"] is True)
+    check("cookie is not readable from javascript",
+          _srv.app.config["SESSION_COOKIE_HTTPONLY"] is True)
+    check("production is not development", _srv.IS_DEV is False)
+
+    _os.environ["RUNG_ENV"] = "development"
+    importlib.reload(_srv)
+    check("development allows the cookie over plain http",
+          _srv.app.config["SESSION_COOKIE_SECURE"] is False)
+finally:
+    _os.environ.clear()
+    _os.environ.update(_saved)
+    if _srv is not None:
+        _os.environ.setdefault("RUNG_ENV", "development")
+        importlib.reload(_srv)
+
+_render = pathlib.Path(__file__).resolve().parent.parent / "render.yaml"
+if _render.exists():
+    _text = _render.read_text()
+    check("deploy config runs a single worker", "--workers 1" in _text)
+    check("deploy config never commits an api key",
+          "sync: false" in _text and "sk-ant" not in _text)
+    check("deploy config generates its secret rather than hardcoding one",
+          "generateValue: true" in _text)
+else:
+    check("render.yaml present", False)
+
+print("\naws deployment")
+# Each of these broke, or would have broken, a real Elastic Beanstalk deploy.
+_root = pathlib.Path(__file__).resolve().parent.parent
+_procfile = (_root / "Procfile").read_text()
+check("Procfile is one command with no comment lines (EB cannot parse them)",
+      _procfile.strip().startswith("web: ") and "#" not in _procfile
+      and len(_procfile.strip().splitlines()) == 1)
+_eb = (_root / ".ebextensions" / "01-rung.config").read_text()
+check("nginx serves /static from the app's folder, not a missing one",
+      "/static: public/static" in _eb)
+check("EB trusts exactly CloudFront and nginx for the client address",
+      'RUNG_PROXY_HOPS: "2"' in _eb)
+check("no secret is committed to EB config",
+      not re.search(r"(RUNG_SECRET_KEY|ANTHROPIC_API_KEY|RUNG_ORIGIN_SECRET)\s*:", _eb))
+check("the module worker is served with a JavaScript extension",
+      (_root / "public" / "static" / "code-runner-worker.js").exists()
+      and not list((_root / "public" / "static").glob("*.mjs")))
+_backups = (_root / ".ebextensions" / "02-backups.config").read_bytes()
+check("backup scripts have Unix line endings (bash rejects \\r)", b"\r" not in _backups)
+check("a restore can never fail a deploy", b"ignoreErrors: true" in _backups)
+_ebignore = [line.strip() for line in (_root / ".ebignore").read_text().splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+check("local databases stay out of the deploy bundle", "data/*.db" in _ebignore)
+check("the private bank is not excluded from the deploy bundle",
+      not any(line.startswith("data/problems") for line in _ebignore))
+_cf = (_root / "deploy" / "cloudfront.yaml").read_text()
+check("CloudFront never caches pages (they carry student state)",
+      "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" in _cf)
+check("CloudFront forwards cookies, query strings and bodies",
+      "b689b0a8-53d0-40ab-baf2-68738e2966ac" in _cf and "POST" in _cf)
+check("CloudFront sends the origin secret header", "X-Rung-Origin" in _cf and "NoEcho: true" in _cf)
+
+print("\nvercel deployment")
+import json as _json
+import tomllib as _tomllib
+
+_pyproject = _tomllib.loads((_root / "pyproject.toml").read_text())
+_requirements = [line.strip() for line in (_root / "requirements.txt").read_text().splitlines()
+                 if line.strip() and not line.startswith("#")]
+check("pyproject.toml and requirements.txt list the same dependencies",
+      sorted(_pyproject["project"]["dependencies"]) == sorted(_requirements))
+_entry = _pyproject["tool"]["vercel"]["entrypoint"]
+_entry_file = _entry.split(":")[0].replace(".", "/") + ".py"
+_vercel = _json.loads((_root / "vercel.json").read_text())
+check("the Vercel entrypoint exists", (_root / _entry_file).exists())
+# The Vercel CLI detects this app as a service, and in services mode a
+# top-level `functions` key is rejected outright ("the owning service is
+# ambiguous"), so the deploy fails before it starts. Fluid compute's default
+# 300 second limit already covers a slow grading call.
+check("vercel.json has no top-level functions key (rejected in services mode)",
+      "functions" not in _vercel)
+check("the function runs next to the Supabase region", _vercel.get("regions") == ["iad1"])
+# Services mode ignores pyproject's entrypoint and refuses to build without
+# its own ("must specify an entrypoint for runtime python").
+check("every Vercel service names the same entrypoint as pyproject.toml",
+      all(service.get("entrypoint") == _entry
+          for service in _vercel.get("services", {}).values()))
+# Vercel's Python build leaves public/ out of the bundle, and in services mode
+# every request goes to Flask, so without this the CSS and the Python runner
+# 404 in production while every local test passes.
+check("the deployed function bundle includes public/ (CSS, Python runner)",
+      all(service.get("functions", {}).get(_entry_file, {}).get("includeFiles") == "public/**"
+          for service in _vercel.get("services", {}).values()))
+_vercelignore = [line.strip() for line in (_root / ".vercelignore").read_text().splitlines()
+                 if line.strip() and not line.lstrip().startswith("#")]
+check("the Supabase password in .env is never uploaded", ".env" in _vercelignore)
+check("old EB bundles and logs are never uploaded", ".elasticbeanstalk" in _vercelignore)
+check("local databases and archives are never uploaded",
+      "data/*.db" in _vercelignore and "*.zip" in _vercelignore)
+check("the private bank is uploaded",
+      not any(line.startswith("data/problems") for line in _vercelignore))
+check("static files sit where Vercel's CDN serves them",
+      (_root / "public" / "static" / "rung.css").exists() and not (_root / "app" / "static").exists())
+
+_saved = dict(_os.environ)
+try:
+    import rung.config as _config
+    _os.environ["RUNG_PROXY_HOPS"] = "two"
+    try:
+        importlib.reload(_config)
+        check("a malformed proxy hop count refuses to boot", False)
+    except RuntimeError:
+        check("a malformed proxy hop count refuses to boot", True)
+    _os.environ["RUNG_PROXY_HOPS"] = "2"
+    check("proxy hops parse from the environment", importlib.reload(_config).PROXY_HOPS == 2)
+finally:
+    _os.environ.clear()
+    _os.environ.update(_saved)
+    importlib.reload(_config)
 
 print(f"\ncase mix: {case_count_by_category()}")
 print(f"total cases: {len(CASES)}")

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Instructor access · Rung{% endblock %}
+{% block nav %}<a href="{{ url_for('index') }}">Student practice</a>{% endblock %}
+{% block body %}
+<section class="hero" style="min-height:60vh">
+  <div>
+    <p class="eyebrow">Instructor view</p>
+    <h1>See patterns, not transcripts.</h1>
+    <p class="lede">The class view uses aggregate hint depth to show where the curriculum—not just one student—may need another example.</p>
+  </div>
+  <div class="panel">
+    {% if disabled %}
+      <h2>Dashboard disabled</h2>
+      <p class="muted">Set a separate <code>RUNG_INSTRUCTOR_CODE</code> in the deployment environment to enable instructor analytics.</p>
+      <a class="button ghost" href="{{ url_for('index') }}">Back to practice</a>
+    {% else %}
+      <h2>Instructor access</h2>
+      <p class="muted small">This code is configured separately from the student experience.</p>
+      {% if error %}<div class="error-banner" role="alert">{{ error }}</div>{% endif %}
+      <form method="post">
+        <div class="field"><label class="field-label" for="code">Instructor code</label><input id="code" type="password" name="code" required autofocus autocomplete="current-password"></div>
+        <button type="submit">Open class view</button>
+      </form>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

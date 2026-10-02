@@ -1,0 +1,28 @@
+# Render blueprint. Create the service from this file rather than clicking
+# through the dashboard, so the configuration lives in the repository and a
+# redeploy cannot quietly differ from what is written down.
+services:
+  - type: web
+    name: rung
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # One worker on purpose: SQLite dislikes concurrent writers and the rate
+    # limiter counts per process. See wsgi.py.
+    startCommand: gunicorn wsgi:app --workers 1 --threads 4 --timeout 120
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: RUNG_ENV
+        value: production
+      - key: RUNG_DB
+        value: /tmp/rung.db
+      - key: RUNG_SECRET_KEY
+        generateValue: true
+      # Optional classroom controls:
+      # RUNG_CURRENT_UNIT gates later material by the course calendar.
+      # RUNG_INSTRUCTOR_CODE enables the protected aggregate dashboard.
+      # RUNG_PUBLIC_ORIGIN enables absolute Open Graph image metadata.
+      - key: ANTHROPIC_API_KEY
+        sync: false   # set this by hand in the dashboard; never commit a key

@@ -129,7 +129,8 @@ reported per mode because they are not comparable across models.
 **Rejected:** Unlimited sessions with full history.
 **Why:** The API is stateless, so the entire conversation is resent every turn.
 Turn 20 pays for turns 1 through 19 again, which makes session cost grow with
-the square of turn count. Measured: 5 turns is $0.032, 40 turns is $0.678.
+the square of turn count. At current Sonnet 5 pricing: 5 turns is about $0.021,
+40 turns is about $0.452.
 Eight times the turns, twenty-one times the cost. The turn cap is the single
 highest-leverage control in the project, and windowing converts the growth from
 quadratic to roughly linear.
@@ -213,7 +214,8 @@ real papercut and the reason the README says so explicitly.
 ### The question bank is not in the repository
 
 **Chose:** `data/problems.json` gitignored, `data/problems.sample.json` committed
-with three generic exercises, `rung/problems.py` reduced to a loader.
+with a small generic evaluation bank, and `rung/problems.py` as a validating
+loader.
 **Rejected:** Committing the real bank.
 **Why:** The questions are department course material, reused every semester and
 not mine to publish. A public repository containing them would hand the full
@@ -518,14 +520,437 @@ over and the hint-depth data is already stored. An API hiccup at that moment
 should not leave a session open forever or lose thirty minutes of a student's
 work. Tested with a grader that raises.
 
+### Production defaults to safe, development opts in
+
+**Chose:** `RUNG_ENV` defaults to production. In production a missing
+`RUNG_SECRET_KEY` is fatal and cookies are Secure; development relaxes both.
+**Rejected:** Defaulting to development, or falling back to a random key
+everywhere.
+**Why:** The dangerous configuration must not be the one you get by forgetting a
+variable. Flask's debug mode serves an interactive console that runs arbitrary
+Python from the browser, so a debug server on a public URL is a remote shell.
+A random secret key is subtler: it works perfectly on one worker and silently
+logs everyone out on a restart or a second worker, which is a miserable bug to
+diagnose. Refusing to boot is louder and kinder.
+**Cost:** One more environment variable to set, and tests have to declare
+themselves as development.
+
+### The database accepts a URL, not just a path
+
+**Chose:** `init_db` takes either a file path or a connection URL, so
+`DATABASE_URL=postgres://...` switches backends.
+**Rejected:** Hardcoding SQLite.
+**Why:** SQLite is right for a class-sized deployment and wrong for the free
+tier's ephemeral disk, where the file is wiped on every deploy. Making the
+backend a config value means the demo runs on SQLite and a real class runs on
+Postgres with no model or query changing. That is the concrete payoff of the ORM
+in this project, and it is the answer to why peewee is here rather than raw SQL.
+**Cost:** A branch in `init_db` plus a real `psycopg` runtime dependency.
+Postgres integration still needs exercising against a live disposable database
+before a class relies on it; the offline suite uses SQLite.
+
+### The database is seeded at import, not by a build step
+
+**Chose:** `wsgi.py` calls `ensure_database()` before gunicorn serves anything.
+**Rejected:** A one-off setup command after deploying.
+**Why:** The free tier's filesystem is ephemeral, so there is no "once". Every
+cold start gets an empty disk, and a manual step that has to run after every
+wake is a step that will not run. The seeder is idempotent, so this is a no-op
+on a warm container.
+**Cost:** Slightly slower first request after a cold start, on top of the
+tier's own 30 to 60 second wake.
+
+---
+
+## Round 4: complete product loop
+
+### Course position gates access; authored labels frame challenge
+
+**Chose:** `RUNG_CURRENT_UNIT` opens the current and earlier units. Later units
+stay visible as a roadmap but their problems are disabled in the UI and rejected
+again on the server. The problem bank may also mark a problem `warmup`, `core`,
+or `stretch` for quick scanning inside its unit.
+**Rejected:** Showing every problem, trusting a disabled radio button, and
+model-generated or absolute "easy / medium / hard" ratings.
+**Why:** The course supplies the honest difficulty axis: when material is taught.
+Instructor-authored challenge labels add useful local context without telling a
+student who is struggling that a problem is universally "easy." A client-only
+gate is editable in devtools.
+**Cost:** One deployment value to advance during the semester, plus an optional
+bank field to review when the instructor changes a problem.
+
+### Picker progress means practiced, not solved
+
+**Chose:** A problem counts toward picker progress after any session reaches its
+normal end, regardless of score or stop reason. The UI calls this "practiced"
+and explicitly says it is not mastery.
+**Rejected:** Solved checkmarks, streaks, rankings, and completion percentages
+that imply competence.
+**Why:** Rung measures how independently a student reasoned, not whether one
+submission passed. A finished rep is objective and encouraging; mastery is a
+larger claim the available evidence cannot support.
+**Cost:** Progress measures exposure. Students still need the concept diagnostic
+and debrief to understand the quality of that practice.
+
+### A problem row starts the session
+
+**Chose:** After entering a handle and choosing Interview or Drill, clicking a
+problem row submits that problem and starts the session immediately.
+**Rejected:** Selecting a radio row and then finding a separate Start button.
+**Why:** The second click confirmed no destructive action and introduced an
+avoidable split-attention step. A full-row submit button is also a larger touch
+target and exposes its action directly to keyboard and assistive-technology
+users.
+**Cost:** There is no intermediate selected state. The row therefore includes a
+directional cue and instructional copy so its navigation behavior is explicit.
+
+### The homepage explains behavior before naming mechanisms
+
+**Chose:** The header has ordinary links to Practice and How it works, while the
+brand mark reads as a ladder rather than a hamburger menu. The hero states one
+core idea and spells out what each hint level does.
+**Rejected:** A nonfunctional drawer icon, a row of button-like product claims,
+and unexplained language such as "help has a ceiling."
+**Why:** A student should understand what will happen before starting a timed
+session. Controls must look interactive only when they are interactive, and the
+product should not require prior knowledge of its own vocabulary.
+The hint ladder is the single explanation on the homepage; a second three-habit
+section repeated the same behavior and was removed.
+**Cost:** The hero contains a little more explanatory copy, balanced by removing
+three competing badges, the abstract ladder graphic, and the redundant lower
+explainer.
+
+### Required fields use words, not color alone
+
+**Chose:** The handle label always says "Required" and explains why. Invalid
+submission adds a written alert, moves focus to the field, and sets
+`aria-invalid`; the red border is supporting information only.
+**Rejected:** Relying on the browser focus outline or color change after a
+student clicks a problem.
+**Why:** A prerequisite should be visible before the student encounters it, and
+validation must remain understandable without color perception.
+**Cost:** Two short lines beneath the field when invalid, one while empty.
+
+### Recommendations are deterministic
+
+**Chose:** Rank available problems from stored hint depth, concept tags, and
+attempt counts.
+**Rejected:** Asking the LLM what a student should practice next.
+**Why:** The database already contains stronger evidence than another model
+opinion. Keeping selection deterministic makes a recommendation explainable:
+the page can name the concept and average rung that caused it.
+**Cost:** The ranking is deliberately simple and will need classroom evidence
+before its weights deserve sophistication.
+
+### Python runs in a killable browser worker
+
+**Chose:** Pyodide/WebAssembly in a module Web Worker, terminated after four
+seconds and recreated after a timeout.
+**Rejected:** Running student code on Flask. Also rejected running WebAssembly on
+the UI thread.
+**Why:** Server execution turns an interview tool into a remote-code-execution
+service. Main-thread WebAssembly lets an infinite loop freeze the timer, chat,
+and End button. A Worker gives the browser a process boundary it can terminate;
+the final code crosses the network only once for grading and is not retained.
+**Cost:** A first-use runtime download from jsDelivr, no turtle/tkinter, and a
+browser dependency that needs cross-browser performance testing.
+
+### Self-assessment is rendered before the proctor score
+
+**Chose:** The debrief withholds proctor notes until all four self-scores are
+saved, then reloads the comparison.
+**Rejected:** Showing both immediately on the same page.
+**Why:** A visible proctor score anchors the student's answer and destroys the
+calibration signal the two-source schema exists to capture. The server does not
+render the hidden content, so devtools do not turn this into a CSS convention.
+**Cost:** One extra click before feedback appears.
+
+### Instructor analytics are aggregate and separately protected
+
+**Chose:** An environment-backed instructor code enables class-level concept and
+participation aggregates. With no code, the route is disabled.
+**Rejected:** A public dashboard, and a transcript browser.
+**Why:** `class_overview()` already identified lecture-level patterns but had no
+product surface. A separate gate makes the role boundary explicit while keeping
+the demo simple. Transcript deletion still applies; the dashboard cannot show
+data the system no longer retains.
+**Cost:** A shared instructor code is appropriate for a small deployment, not a
+replacement for campus SSO. Real classroom rollout should put the app behind the
+institution's identity layer.
+
+### The actionable next step survives transcript deletion
+
+**Chose:** Store the grader's overall recommendation in `SessionFeedback` while
+purging turn text.
+**Rejected:** Discarding the overall line, or keeping the transcript so it could
+be regenerated later.
+**Why:** The previous code paid to generate the most actionable part of the
+grade and then threw it away. A short next step has low privacy cost and high
+student value; retaining the source transcript reverses that trade.
+**Cost:** An eighth table and a feedback statement that cannot be regenerated
+after model changes.
+
+### A permanent cookie for the handle, not accounts
+
+**Chose:** Mark the session cookie `permanent` (90 days) when a handle is set
+in `/start`, so a returning student is recognized without retyping it.
+**Rejected:** Real accounts with passwords or email verification. Leaving the
+cookie session-only, so it clears every time the browser closes.
+**Why:** The diagnostic only needs to attribute a session to a consistent
+label, not to a verified identity, so the identity layer should cost the
+student nothing. A password is friction with no payoff at this stakes level: a
+mistyped handle already fragments a student's own history exactly as much as
+a forgotten password would lock them out of it. A longer-lived cookie is pure
+convenience layered on the same non-authentication -- it does not make the
+handle any more verified, it just stops asking a returning student to retype
+something the browser already knew.
+**Cost:** The instructor login route explicitly resets `cookie.permanent` to
+`False` after signing in, so a shared browser that already carries a 90-day
+student cookie can never inherit that lifetime for the elevated instructor
+cookie. Skipping that line would be a real privilege-duration bug, not a
+cosmetic one.
+
+### Elastic Beanstalk over App Runner or Lightsail for the AWS path
+
+**Chose:** A single-instance Elastic Beanstalk environment, with CloudFront in
+front for TLS, as the AWS equivalent of the Render deployment.
+**Rejected:** App Runner (no free tier, and scale-to-zero reintroduces the
+cold-start problem this project already has on Render's free tier). Lightsail
+(a flat, predictable price, but a bare VM to patch and administer by hand with
+no free tier at all).
+**Why:** Elastic Beanstalk's single-instance shape reuses the existing
+gunicorn/wsgi.py entry point almost unchanged, is free for 12 months on
+`t3.micro`, and its instance disk survives ordinary deploys and reboots --
+unlike Render's free tier, where `/tmp` is wiped on every deploy, restart, and
+spin-down. An Elastic Beanstalk single instance serves plain HTTP with no
+certificate of its own, and `SESSION_COOKIE_SECURE=True` means the handle
+cookie is silently dropped by every browser over plain HTTP, so CloudFront in
+front is load-bearing, not cosmetic polish.
+**Cost:** SQLite at `/var/rung-data` does not survive an instance
+*replacement* (health-based auto-replacement, a platform/AMI update, or
+turning on load balancing or auto scaling later), only ordinary deploys and
+reboots. Acceptable for a portfolio link; not a substitute for the Postgres
+escape hatch DEPLOY.md already documents if this needs to survive real
+classroom use. See AWS_DEPLOY.md.
+
+### A per-IP cap on session starts, not just per-student
+
+**Chose:** `STARTS_PER_HOUR_PER_IP` (5), checked in `/start` before a `Student`
+row even exists.
+**Rejected:** Trusting `DAILY_DRILL_LIMIT`/`DAILY_INTERVIEW_LIMIT` alone.
+**Why:** SECURITY.md's abuse model was written for "a bored student with a
+loop" inside one classroom roster. Once the link is public on a resume, the
+per-student daily cap stops mattering: `Student.get_or_create` asks for
+nothing but a string, so a script rotating through fresh handles pays for a
+full interview session every time with no cap ever engaging. The IP address is
+a weaker identity than a handle -- shared networks and VPNs sit behind one --
+but it is an identity a script cannot type its way around the same way it
+types a new handle, and it costs nothing to check before the expensive part
+(the Anthropic call) happens.
+**Cost:** A real classroom's shared NAT (one dorm, one lab) could hit this
+before hitting the per-student caps on a busy day. The Anthropic console spend
+cap with auto-reload off, already recommended in SECURITY.md, is still the
+actual backstop; this only exists to keep that backstop from being the first
+line of defense.
+
+---
+
+## Round 5: a class deployment, not a portfolio link
+
+### Solved means every check passed, alongside practiced
+
+**Chose:** A session is solved when its final code passes every `[input,
+expected]` check in the bank. Practiced stays exactly as it was. The picker,
+progress page and instructor view show both, and the progress page puts the
+hint depth it took next to every solve.
+**Rejected:** Keeping practiced only, as round 4 decided. An LLM judging
+correctness from the code. Running the checks on the server.
+**Why:** Round 4 rejected solved checkmarks because "solved" implied competence
+the evidence could not support. That objection was to the claim, not the
+measurement. Passing the bank's own checks is a narrow, objective fact that
+students asked for and the course wants to see, and pairing it with hint depth
+keeps the round 4 point intact: solved at rung 1 and solved at rung 4 are
+different records. An LLM verdict on correctness is an opinion with variance.
+Server execution is remote code execution.
+**Cost:** The browser reports the result, so a student can forge their own
+solved flag in devtools. Acceptable for a practice record; it must never feed a
+grade. Problems without checks (the class-definition unit) can be practised but
+never solved, which looks less finished and is more honest.
+
+### The checks run the same code in the browser and in the tests
+
+**Chose:** `rung/checks.py` is ordinary Python, handed to the Pyodide worker as
+source and imported by the offline suite.
+**Rejected:** A checker written in JavaScript, or Python embedded as a string in
+the worker.
+**Why:** Code that only ever runs in a browser only ever gets tested by hand.
+Keeping it in a module means the suite exercises the exact file the browser
+runs: argument unpacking, the JSON round trip that makes `(3, 4)` equal `[3,
+4]` and `{1: ...}` equal `{"1": ...}`, `True` not passing for `1`.
+**Cost:** The harness must stay standard-library-only and within what Pyodide's
+Python accepts.
+
+### Failing inputs are withheld until the debrief
+
+**Chose:** During a session the student sees "2 of 4 checks pass" and the first
+exception, never which input failed. The debrief names the failing calls after
+self-assessment.
+**Rejected:** Showing each failing case as it happens.
+**Why:** The rubric's debugging dimension is about finding the case that breaks
+your own code. A list of failing inputs does that work for the student, the
+same way a proctor naming the edge case would. After the session it is the
+most useful thing on the page, so it is shown then, behind self-assessment for
+the same anchoring reason as the proctor scores.
+**Cost:** A frustrated student with a failing check has to reason about which
+edge case it is. That is the exercise.
+
+### Topics are a second way to list problems, and the default
+
+**Chose:** An optional `topic` per problem (Strings, Lists, Dictionaries...),
+a picker that groups by topic by default with a toggle back to course units,
+easiest-first ordering inside a topic, and a progress-by-topic table.
+Difficulty stays the round 4 labels, shown under a "Difficulty" heading with a
+three-step meter.
+**Rejected:** Replacing units with topics. Easy/medium/hard labels.
+**Why:** Students think "I'm weak on dictionaries", not "I'm weak on unit 3",
+and a data-structures course will not map onto one intro course's units at all.
+Units still gate what is open, so they stay. The round 4 reasoning against
+"Easy" still holds; the labels just needed to be recognisable as difficulty.
+**Cost:** Two groupings to keep coherent. A bank without topics falls back to
+unit titles, so an old private bank still works unchanged.
+
+### CloudFront is a template, not console instructions
+
+**Chose:** `deploy/cloudfront.yaml`, deployed with one command, linted in CI.
+**Rejected:** The step-by-step console instructions from round 4.
+**Why:** Following those instructions exactly produced a site where nobody
+stayed signed in, pages could be cached across students, and every POST
+failed. Every one of those was a console default. Three settings (cache policy,
+origin request policy, allowed methods) decide whether the app works, and a
+template makes them reviewable and repeatable.
+**Cost:** The AWS CLI or the CloudFormation console becomes part of the deploy.
+
+### The app trusts exactly two proxies, and only CloudFront can reach it
+
+**Chose:** `RUNG_PROXY_HOPS=2` on Elastic Beanstalk, and a secret header that
+CloudFront adds and the app requires (`RUNG_ORIGIN_SECRET`).
+**Rejected:** Trusting `X-Forwarded-For` wholesale. Leaving it at the default.
+Restricting the security group to CloudFront's IP ranges.
+**Why:** Behind two proxies every request came from 127.0.0.1, so the per-IP
+start cap from round 4 was one cap for the whole class. Trusting the header
+fixes that only if nothing can skip CloudFront and write the header itself,
+which the environment's public `elasticbeanstalk.com` address allowed. The
+secret header closes that at the application, where it is tested; a security
+group edit is invisible to the test suite and easy to undo in the console.
+**Cost:** Two secrets that must match, and a 403 on the EB address that looks
+like an outage until you know why.
+
+### Hourly SQLite backups to S3 instead of Postgres
+
+**Chose:** A cron job that snapshots the database with SQLite's online backup
+API to the account's Elastic Beanstalk bucket, and a restore on any deploy that
+finds no database.
+**Rejected:** RDS Postgres, which round 4 pointed to as the path for a real
+class. Relying on the instance disk alone.
+**Why:** For one class, one small instance is plenty, and losing an instance
+should cost at most an hour of practice rather than a semester. Backups do
+that for cents a month with no new infrastructure, no IAM changes, and no
+second database to secure. Checking the Postgres path turned up that it has
+never worked: `init_db` calls `initialize()` on a `SqliteDatabase`, and the
+concept query uses SQLite's `IIF`.
+**Cost:** Up to an hour of data lost on an instance failure. Still one
+instance and one worker. Postgres needs fixing and a real test before it is an
+option.
+
+### The worker is a .js file, and the CSP allows Pyodide's helper worker
+
+**Chose:** Rename `code-runner-worker.mjs` to `.js`; add jsDelivr to
+`worker-src`.
+**Why:** A module worker refuses to start unless its script is served with a
+JavaScript MIME type, and `.js` is the extension every server gets right. The
+pinned Pyodide release starts a helper worker from its own CDN URL, which
+`worker-src 'self'` blocked, so the runner never loaded. `script-src` already
+trusts that origin, so this adds no exposure.
+
+### Daily caps reset at Berea's midnight
+
+**Chose:** `TZ=America/New_York` on Elastic Beanstalk.
+**Why:** Instances run in UTC, so "today" for the daily caps ended at 8pm
+Eastern for half the year. A student's evening practice session should not
+count against tomorrow.
+
+### Vercel + Supabase as the fastest path to a live class
+
+**Chose:** The Flask app as one Vercel function (`wsgi.py`), Postgres on
+Supabase through its transaction pooler, deployed with the Vercel CLI from the
+working folder.
+**Rejected:** Finishing the AWS setup first. Connecting the GitHub repository
+to Vercel.
+**Why:** It needed to be live the same day, and Vercel removes the parts of the
+AWS path that took longest: certificates, DNS validation records, CloudFront
+settings, a server to back up. Supabase is plain Postgres, so the app needed no
+new code beyond making the Postgres path real. The CLI deploys what is in the
+folder, which is the only way the gitignored course bank reaches the function
+without publishing it.
+**Cost:** In-memory rate limits count per function instance. A free Supabase
+project pauses after a week idle. Hobby-plan terms are non-commercial.
+
+### The Postgres path is tested, not assumed
+
+**Chose:** `database` is a `DatabaseProxy`; CASE replaces SQLite's `IIF`;
+averages are converted to float; psycopg's prepared statements are off for
+Postgres URLs; the app suite runs against Postgres in CI
+(`RUNG_TEST_DATABASE_URL`).
+**Why:** Round 3 advertised `DATABASE_URL=postgres://...` as a one-variable
+switch. It failed on its first line, and two more Postgres-only failures sat
+behind it: `IIF` does not exist, and Postgres returns AVG as a Decimal that
+raises when the recommendation score adds a float. The SQLite suite could never
+see any of it. Supabase's transaction pooler adds a fourth: it reuses server
+connections between transactions, so prepared statements vanish mid-session.
+**Cost:** A second CI job with a Postgres service container.
+
+### Static files live in public/static
+
+**Chose:** Move them out of `app/static`; Flask and nginx serve the same
+folder, and `vercel.json` adds `public/**` to the function bundle with
+`includeFiles`.
+**Why:** Vercel's Python build treats `public/` as CDN files and leaves it out
+of the function. The CLI configures the app as a Vercel "service", and routing
+into a service is final, so the CDN never answers and Flask 404ed every
+stylesheet in production while every local check passed. One folder, included
+explicitly, works on every host.
+
+### Cost limits that hold under attack, not just in normal use
+
+**Chose:** An atomic per-session turn lease, an atomic claim on finishing, a
+site-wide daily session ceiling counted in the database, and an optional class
+code.
+**Rejected:** Trusting the turn cap, the per-handle caps and the in-memory
+per-IP limit, which is what round 4 did.
+**Why:** Asked whether the API budget could be run up, the honest answer was
+yes, two ways. Parallel requests all read the same turn count before any of
+them stored a turn, so a session's cap could be passed twenty times over. And
+handles are free, so the per-handle caps bound a student but not a script;
+the per-IP cap counts per process and a VPN steps around it. The lease makes
+calls for one session strictly sequential (20 simultaneous messages, 2 billed,
+tested live). The ceiling turns the worst day into a number nobody can raise.
+The class code removes the public internet from the threat model.
+**Cost:** A session's second tab waits for the first tab's reply. A determined
+student can make Rung "full for today" for the class; that is visible in the
+logs and costs at most the ceiling.
+
+### Daily caps use the course's timezone, not the server's
+
+**Chose:** `RUNG_TIMEZONE` (default `America/New_York`) decides midnight.
+**Why:** Vercel's clock is UTC and cannot be changed the way Elastic
+Beanstalk's `TZ` can, which would end a student's day at 8pm.
+
 ---
 
 ## Still open
 
 - Rung escalation policy. What earns a student the next rung: elapsed time,
   failed attempts, or asking?
-- Whether `advance_phase` should be the model's call or the server's, decided
-  from a transcript check.
 - Whether the judge scores all four rubric dimensions per turn or only at
   session end. Per turn is richer and roughly four times the cost.
 - Whether `DAILY_DRILL_LIMIT` of 12 is right. It sets the funding ceiling
@@ -533,15 +958,16 @@ work. Tested with a grader that raises.
 - How accommodations are handled, given that the proctor cannot verify a claim
   made mid-interview and refusing everything that sounds like one is the wrong
   answer. Probably account settings rather than conversation.
-- Whether the editor should run code. Right now it is a plain textarea kept in
-  the browser. CodeMirror plus Pyodide would make it a real editor with tests,
-  and would also mean deciding what happens to code the student writes.
 - Whether the grader should see the hint-depth evidence for dimensions other
   than problem solving. It currently sees all of it, which may be anchoring
   communication and debugging scores to how much help the student needed.
-- Whether `Session.solved` should exist at all. Pass/fail is a weak signal at
-  this level and hint depth is the better one, so it may be a column that
-  invites the wrong question.
+- Whether browser-reported checks are enough once solved counts matter to an
+  instructor. Server-side verification means sandboxed execution, which is a
+  project of its own.
+- Whether class-definition problems should get checks, which needs a way to
+  express "construct, call methods, compare" in the bank.
+- Moving the per-minute and per-hour rate limits into the database, so they
+  hold across Vercel's function instances.
 - Whether 177 clean adversarial cases means the constraint is robust or the
   attacks are still too easy. Running the red-teamer repeatedly at higher counts
   is the cheapest way to keep testing that.

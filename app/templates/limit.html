@@ -1,7 +1,18 @@
 {% extends "base.html" %}
+{% block title %}Practice limit · Rung{% endblock %}
 {% block body %}
-<h1>That is enough for today</h1>
-<p class="sub">You have used all {{ limit }} of your {{ mode }} sessions today.
-Unlimited retries turn practice into guessing, so the cap is deliberate.</p>
-<p><a href="{{ url_for('profile') }}">See what to work on</a> or come back tomorrow.</p>
+<section class="hero" style="min-height:58vh">
+  <div>
+    <p class="eyebrow">Practice complete for today</p>
+    {% if site_wide %}
+    <h1>Rung is full for today.</h1>
+    <p class="lede">The whole class has used today’s {{ limit }} {{ mode }} sessions. New sessions open again at midnight. Your progress and diagnostic are unaffected.</p>
+    {% else %}
+    <h1>That’s enough for today.</h1>
+    <p class="lede">You have used all {{ limit }} {{ mode }} sessions available today. The cap keeps practice deliberate instead of turning one problem into brute-force guessing.</p>
+    {% endif %}
+    <div class="form-actions" style="justify-content:flex-start"><a class="button" href="{{ url_for('profile') }}">See what to work on</a><a class="button ghost" href="{{ url_for('index') }}">Back to problems</a></div>
+  </div>
+  <aside class="panel ladder-card"><p class="eyebrow">A better next move</p><h2>Review your signal.</h2><p class="muted">Look for one concept with consistently deep hints, then explain its core idea out loud without code.</p></aside>
+</section>
 {% endblock %}

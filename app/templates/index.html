@@ -1,50 +1,202 @@
 {% extends "base.html" %}
-{% block nav %}{% endblock %}
+{% from "_difficulty.html" import difficulty_badge %}
+{% block nav %}
+  <a href="#practice">Practice</a>
+  <a href="#how-it-works">How it works</a>
+  {% if handle %}<a href="{{ url_for('profile') }}">My progress</a>{% endif %}
+  {% if instructor_enabled %}<a href="{{ url_for('instructor') }}">Instructor</a>{% endif %}
+{% endblock %}
 {% block body %}
-<h1>Pick a problem</h1>
-<p class="sub">The proctor asks questions. It will not give you the answer, and
-that is the point: how much help you need is what it measures.</p>
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow">Practice the interview, not the answer</p>
+    <h1>Make your thinking <span>interview-ready.</span></h1>
+    <p class="lede">Rung gives you the pressure and structure of a coding interview without handing over the solution. It measures the depth of help you need, then turns that signal into your next focused rep.</p>
+    <div class="core-idea">
+      <span>Core idea</span>
+      <p>Give the smallest useful hint, then hand the thinking back to you.</p>
+    </div>
+  </div>
+  <aside class="panel ladder-card" id="how-it-works" aria-label="The Rung hint ladder">
+    <p class="eyebrow">How Rung helps</p>
+    <h2>Hints, one step at a time.</h2>
+    <p class="muted small">Rung begins with a question and becomes more direct only when you need it. The answer still has to be yours.</p>
+    <ol class="rung-list">
+      <li class="rung-item"><span class="rung-number">00</span><span>Ask a question</span></li>
+      <li class="rung-item"><span class="rung-number">01</span><span>Rephrase the problem</span></li>
+      <li class="rung-item"><span class="rung-number">02</span><span>Find where you are stuck</span></li>
+      <li class="rung-item"><span class="rung-number">03</span><span>Point toward a concept</span></li>
+      <li class="rung-item"><span class="rung-number">04</span><span>Name the idea, never the code</span></li>
+    </ol>
+  </aside>
+</section>
 
-<form method="post" action="{{ url_for('start') }}" class="panel">
-  <label class="small muted" for="handle">Your name or handle</label>
-  <input type="text" id="handle" name="handle" value="{{ handle }}" required
-         autocomplete="off" style="margin:6px 0 16px">
-
-  <label class="small muted">Mode</label>
-  <div style="margin:6px 0 16px">
-    {% for name, mode in modes.items() %}
-    <label style="display:block; padding:7px 0">
-      <input type="radio" name="mode" value="{{ name }}"
-             {% if name == 'drill' %}checked{% endif %}>
-      <strong>{{ name }}</strong>
-      <span class="muted small">
-        {{ mode.duration_minutes }} min, up to {{ mode.max_turns }} turns,
-        hints to rung {{ mode.max_rung }}
-        {%- if name == 'drill' %} - short reps on one concept
-        {%- else %} - the full graded interview{% endif %}
-      </span>
-    </label>
+{% if recommendations %}
+<section class="section" aria-labelledby="next-heading">
+  <div class="section-head">
+    <div>
+      <p class="eyebrow">Based on your sessions</p>
+      <h2 id="next-heading">A useful next rep</h2>
+    </div>
+    <a class="small" href="{{ url_for('profile') }}">See the full diagnostic</a>
+  </div>
+  <div class="recommend-grid">
+    {% for item in recommendations %}
+    <article class="panel recommend-card">
+      <div><span class="tag">{{ item.topic }}</span> {{ difficulty_badge(item) }}{% if item.solved %} <span class="tag solved-tag">Solved</span>{% elif item.attempts == 0 %} <span class="tag">New</span>{% endif %}</div>
+      <h3>{{ item.title.replace('_', ' ')|title }}</h3>
+      <p class="muted small">{{ item.reason }}</p>
+      <form method="post" action="{{ url_for('start') }}">
+        <input type="hidden" name="handle" value="{{ handle }}">
+        <input type="hidden" name="mode" value="drill">
+        <input type="hidden" name="problem" value="{{ item.slug }}">
+        <button type="submit">Start a 5-minute drill</button>
+      </form>
+    </article>
     {% endfor %}
   </div>
+</section>
+{% endif %}
 
-  <label class="small muted">Problem</label>
-  <div style="margin:6px 0 18px">
-  {% for unit in units %}
-    <div style="margin-bottom:12px">
-      <div class="small muted" style="margin-bottom:4px">
-        Unit {{ unit.number }} - {{ unit.title }}
-        {% if unit.week_range %}<span>({{ unit.week_range }})</span>{% endif %}
-      </div>
-      {% for problem in unit.problems %}
-      <label style="display:block; padding:3px 0 3px 12px">
-        <input type="radio" name="problem" value="{{ problem.slug }}" required>
-        {{ problem.title }}
-      </label>
-      {% endfor %}
+<section class="section" id="practice" aria-labelledby="picker-heading">
+  <div class="section-head">
+    <div>
+      <p class="eyebrow">Choose your session</p>
+      <h2 id="picker-heading">Pick a problem</h2>
     </div>
-  {% endfor %}
+    {% if current_unit %}<span class="pill current">Class is on unit {{ current_unit }}</span>{% endif %}
   </div>
 
-  <button type="submit">Start</button>
-</form>
+  <form method="post" action="{{ url_for('start') }}" class="panel setup-card">
+    <div class="field">
+      <label class="field-label" for="handle">Your name or handle <span class="required-text">Required</span></label>
+      <input type="text" id="handle" name="handle" value="{{ handle }}" required pattern=".*\S.*" maxlength="48" autocomplete="nickname" placeholder="How your progress will be labeled" aria-describedby="handle-help handle-error">
+      <p class="field-help" id="handle-help">Enter this before choosing a problem. It labels your saved practice progress.</p>
+      <p class="field-error" id="handle-error" role="alert" hidden>Enter a name or handle before choosing a problem.</p>
+    </div>
+
+    {% if access_required %}
+    <div class="field">
+      <label class="field-label" for="access_code">Class code <span class="required-text">Required</span></label>
+      <input type="text" id="access_code" name="access_code" required maxlength="128" autocomplete="off" spellcheck="false" placeholder="From your instructor" aria-describedby="access-help"{% if access_error %} aria-invalid="true"{% endif %}>
+      <p class="field-help" id="access-help">Asked once per browser. It keeps Rung for your class.</p>
+      {% if access_error %}<p class="field-error" role="alert">That class code is not right. Check it with your instructor.</p>{% endif %}
+    </div>
+    {% endif %}
+
+    <fieldset class="field">
+      <legend>Session type</legend>
+      <div class="mode-grid">
+        {% for name, mode in modes.items() %}
+        <label class="choice">
+          <input type="radio" name="mode" value="{{ name }}" {% if name == 'drill' %}checked{% endif %}>
+          <span class="choice-body">
+            <span class="choice-title">
+              <span>{{ name|title }}</span>
+              <span class="tag">{{ mode.duration_minutes }} min</span>
+            </span>
+            <span class="choice-copy">
+              {% if name == 'drill' %}A short rep on explaining and coding, with hints capped at rung {{ mode.max_rung }}.
+              {% else %}The full {{ mode.max_turns }}-turn flow, from clarification through debugging and debrief.{% endif %}
+            </span>
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Problems by {{ 'topic' if view == 'topic' else 'course unit' }}</legend>
+      <div class="picker-toolbar">
+        <p class="problem-instruction" id="problem-instruction">Choose a session type, then click a problem to begin.</p>
+        <nav class="view-toggle" aria-label="Group problems by">
+          <a href="{{ url_for('index', view='topic') }}#practice"{% if view == 'topic' %} aria-current="true"{% endif %}>Topic</a>
+          <a href="{{ url_for('index', view='unit') }}#practice"{% if view == 'unit' %} aria-current="true"{% endif %}>Course unit</a>
+        </nav>
+      </div>
+      <div class="practice-overview">
+        <div class="practice-overview-copy">
+          <div>
+            <strong>Practice progress</strong>
+            <span class="muted small">Finished reps, not a mastery score.</span>
+          </div>
+          {% if handle %}
+          <span class="practice-total">{{ course_progress.practiced }}/{{ course_progress.total }} available problems practiced · {{ course_progress.solved }} solved</span>
+          {% else %}
+          <span class="practice-total muted">Finish a session to begin tracking</span>
+          {% endif %}
+        </div>
+        <div class="practice-track" role="progressbar" aria-label="Available problems practiced" aria-valuemin="0" aria-valuemax="{{ course_progress.total }}" aria-valuenow="{{ course_progress.practiced }}">
+          <span class="practice-fill" style="width: {{ course_progress.pct }}%"></span>
+        </div>
+        <p class="status-legend micro muted"><span class="practice-status is-solved" aria-hidden="true">✓</span> solved: every check passed <span class="practice-status is-practiced" aria-hidden="true">•</span> practiced <span class="legend-gap"></span> Difficulty runs Warm-up, Core, Stretch, relative to this course.</p>
+      </div>
+      <div class="unit-list">
+        {% for group in groups %}
+        <details class="unit-block{% if not group.available %} locked{% endif %}"{% if group.open %} open{% endif %}>
+          <summary class="unit-head">
+            <div class="unit-title">
+              <span class="tag">{{ group.tag }}</span>
+              <strong>{{ group.title }}</strong>
+              {% if group.is_current %}<span class="pill current">Current</span>{% endif %}
+            </div>
+            <div class="unit-head-meta">
+            {% if group.available %}
+            <div class="unit-progress">
+              <span>{{ group.practiced_count }}/{{ group.problem_count }} practiced{% if group.solved_count %} · {{ group.solved_count }} solved{% endif %}</span>
+              <span class="unit-progress-track" aria-hidden="true"><span style="width: {{ group.progress_pct }}%"></span></span>
+            </div>
+            {% else %}
+            <span class="pill">Later</span>
+            {% endif %}
+              <span class="unit-toggle" aria-hidden="true"><span class="when-closed">View</span><span class="when-open">Hide</span></span>
+            </div>
+          </summary>
+          <div class="problem-list">
+            <div class="problem-columns" aria-hidden="true">
+              <span>Status</span><span>Problem</span><span>Difficulty</span><span></span>
+            </div>
+            {% for problem in group.problems %}
+            {% set status = 'solved' if problem.solved else 'practiced' if problem.practiced else 'new' %}
+            <button class="problem-choice" type="submit" name="problem" value="{{ problem.slug }}" aria-describedby="problem-instruction" aria-label="{% if problem.available %}Start {{ problem.title.replace('_', ' ')|title }}, {{ problem.challenge_label }} difficulty{% if status != 'new' %}, {{ status }}{% endif %}{% else %}{{ problem.title.replace('_', ' ')|title }}, available later{% endif %}"{% if not problem.available %} disabled{% endif %}>
+              <span class="problem-label">
+                <span class="practice-status{% if status != 'new' %} is-{{ status }}{% endif %}" aria-hidden="true">{% if status == 'solved' %}✓{% elif status == 'practiced' %}•{% elif problem.available %}·{% else %}—{% endif %}</span>
+                <span class="problem-name">{{ problem.title.replace('_', ' ')|title }}{% if view == 'topic' %} <span class="micro muted">Unit {{ problem.unit_number }}</span>{% endif %}</span>
+                {{ difficulty_badge(problem) }}
+                <span class="problem-action" aria-hidden="true">›</span>
+              </span>
+            </button>
+            {% endfor %}
+          </div>
+        </details>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <div class="form-actions">
+      <span class="muted small">Your interview text is deleted after grading; the learning signal remains.</span>
+      <span class="start-guidance">Click a problem to start <span aria-hidden="true">→</span></span>
+    </div>
+  </form>
+</section>
+<script>
+  var handleField = document.getElementById("handle");
+  var handleError = document.getElementById("handle-error");
+
+  handleField.addEventListener("invalid", function (event) {
+    event.preventDefault();
+    handleField.setCustomValidity("Enter a name or handle.");
+    handleField.setAttribute("aria-invalid", "true");
+    handleError.hidden = false;
+    handleField.focus();
+  });
+
+  handleField.addEventListener("input", function () {
+    handleField.setCustomValidity("");
+    if (handleField.value.trim()) {
+      handleField.removeAttribute("aria-invalid");
+      handleError.hidden = true;
+    }
+  });
+</script>
 {% endblock %}

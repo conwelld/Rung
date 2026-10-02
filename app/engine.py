@@ -12,11 +12,15 @@ that make this an interview rather than a chat window belong in neither.
 """
 
 import datetime
+import logging
 
 from rung.budget import SessionBudget
 from rung.config import RETAIN_TRANSCRIPTS, get_mode
 from rung.grader import grade_session
-from rung.models import Problem, RubricScore, Session, Student, Turn, database
+from rung.models import (
+    Problem, RubricScore, Session, SessionFeedback, Student, Turn, database,
+)
+from rung.problems import PROBLEMS
 from rung.proctor import ask_proctor
 
 # How many turns a student must spend in a phase before the proctor may advance
@@ -29,6 +33,12 @@ PHASE_MINIMUMS = {"CLARIFY": 1, "APPROACH": 2, "CODE": 2, "DEBUG": 1}
 # classifier, this asks whether they wrote enough to constitute a plan. The
 # proctor also has to agree via advance_phase, so this is a floor, not the rule.
 MIN_APPROACH_CHARS = 60
+
+# How long one turn may hold the session before another request can take it.
+# Longer than the proctor's 60 second API timeout, so a slow reply is never
+# overlapped, and short enough that a crashed request frees the session soon.
+TURN_LEASE_SECONDS = 90
+logger = logging.getLogger(__name__)
 
 
 class SessionEngine:
@@ -50,7 +60,8 @@ class SessionEngine:
         settings = get_mode(mode)
         with database.atomic():
             student, _ = Student.get_or_create(handle=handle.strip().lower())
-            problem = Problem.get(Problem.slug == problem_slug)
+            problem = Problem.get(
+                (Problem.slug == problem_slug) & (Problem.active == True))  # noqa: E712
             session = Session.create(
                 student=student, problem=problem, mode=mode,
                 model=settings["model"],
@@ -125,11 +136,46 @@ class SessionEngine:
                 messages.append({"role": "assistant", "content": turn.proctor_text})
         return messages
 
+    def _claim_turn(self) -> bool:
+        """Take the session's single turn slot, or report that it is taken.
+
+        The turn cap and token budget are checked before each model call, from
+        the turns stored so far. Twenty requests fired at once would all see the
+        same count, all pass, and all be billed, so the cap only holds if calls
+        happen one at a time. A single conditional UPDATE is atomic in SQLite
+        and Postgres alike, so exactly one request wins. The lease expires on
+        its own, so a request that dies mid-call cannot lock the session.
+        """
+        now = datetime.datetime.now()
+        claimed = (Session
+                   .update(turn_lease_until=now + datetime.timedelta(seconds=TURN_LEASE_SECONDS))
+                   .where((Session.id == self.session.id)
+                          & Session.ended_at.is_null()
+                          & (Session.turn_lease_until.is_null()
+                             | (Session.turn_lease_until < now)))
+                   .execute())
+        return claimed == 1
+
+    def _release_turn(self) -> None:
+        Session.update(turn_lease_until=None).where(Session.id == self.session.id).execute()
+
     def send(self, student_message: str) -> dict:
         """One exchange. Returns what the browser needs to render."""
         if self.is_over:
             return {"ended": True, "reply": "This session has already finished."}
+        if not self._claim_turn():
+            if Session.get_by_id(self.session.id).ended_at is not None:
+                return {"ended": True, "reply": "This session has already finished."}
+            return {"busy": True}
+        try:
+            # Reread now that this request owns the session: the copy loaded at
+            # the start of the request may predate the turn that just released it.
+            self.session = Session.get_by_id(self.session.id)
+            return self._exchange(student_message)
+        finally:
+            self._release_turn()
 
+    def _exchange(self, student_message: str) -> dict:
         budget = self._budget()
         if not budget.can_continue():
             self.finish(budget.stopped_because)
@@ -148,28 +194,36 @@ class SessionEngine:
 
         advanced = self._maybe_advance(turn, student_message, phase_before)
         usage = turn.get("usage", {})
+        input_used = (
+            usage.get("input_tokens", 0)
+            + usage.get("cache_creation_input_tokens", 0)
+            + usage.get("cache_read_input_tokens", 0)
+        )
 
         with database.atomic():
             Turn.create(
                 session=self.session,
                 ordinal=self.turns().count() + 1,
                 phase=phase_before,
-                rung_used=min(turn["rung_used"], turn["rung_ceiling"]),
+                rung_used=max(0, min(turn["rung_used"], turn["rung_ceiling"])),
                 rung_ceiling=turn["rung_ceiling"],
                 advanced_phase=advanced,
                 # Always stored during the session. Purged in finish() unless
                 # RETAIN_TRANSCRIPTS, so the grade outlives the transcript.
                 student_text=student_message,
                 proctor_text=turn["reply"],
-                input_tokens=usage.get("input_tokens", 0)
-                + usage.get("cache_read_input_tokens", 0),
+                input_tokens=input_used,
                 output_tokens=usage.get("output_tokens", 0),
             )
-            self.session.input_tokens += usage.get("input_tokens", 0)
+            self.session.input_tokens += input_used
             self.session.output_tokens += usage.get("output_tokens", 0)
             if advanced:
                 self.session.phase_reached = self.phase
-            self.session.save()
+            # Only the fields this method changed. A full save would write back
+            # this request's copy of ended_at, reopening a session that the
+            # browser's finish call closed while the model was answering.
+            self.session.save(only=[Session.input_tokens, Session.output_tokens,
+                                    Session.phase_reached])
 
         return {
             "reply": turn["reply"],
@@ -202,22 +256,67 @@ class SessionEngine:
         self.session.phase_reached = self.phases[index + 1]
         return True
 
+    # --- checks --------------------------------------------------------------
+    def check_tests(self) -> list:
+        """The bank's [input, expected] pairs for this problem, possibly empty.
+
+        Read from the bank rather than the database, like `challenge` and
+        `topic`, so editing a problem's tests needs no reseed.
+        """
+        return list(PROBLEMS.get(self.session.problem.slug, {}).get("tests") or [])
+
+    def record_checks(self, results) -> bool:
+        """Store the browser's check results for the final code, once.
+
+        The browser is the only place student code runs, so this is a report
+        rather than a verdict, and it is validated as one: one boolean per bank
+        check, or nothing is stored. The first report wins, so re-posting after
+        the debrief has shown the failing inputs cannot rewrite the record.
+        """
+        tests = self.check_tests()
+        if (not tests or not isinstance(results, list) or len(results) != len(tests)
+                or not all(isinstance(r, bool) for r in results)
+                or self.session.check_results is not None):
+            return False
+        with database.atomic():
+            self.session.check_results = "".join("1" if r else "0" for r in results)
+            self.session.solved = all(results)
+            self.session.save()
+        return True
+
     # --- ending --------------------------------------------------------------
-    def finish(self, reason: str = "completed", code: str = "") -> dict | None:
+    def finish(self, reason: str = "completed", code: str = "",
+               checks: list | None = None) -> dict | None:
         """End the session, grade it, then purge the transcript.
 
         Order matters. The grader needs the text, so it runs first; the purge
         runs after and is unconditional unless retention is on. A grading
         failure must not leave a session open forever, so the session is closed
         either way and the debrief renders with self-scores alone.
+
+        Check results are recorded even when the session already ended: a turn
+        or token limit closes it server-side before the browser has sent its
+        final code, and the browser's finish call arrives just after.
         """
+        if checks is not None:
+            self.record_checks(checks)
         if self.is_over:
             return None
 
-        with database.atomic():
-            self.session.ended_at = datetime.datetime.now()
-            self.session.stopped_because = reason
-            self.session.save()
+        # Claim the ending with a conditional UPDATE rather than a check then a
+        # save: two finish calls arriving together (a double click, the timer
+        # and the End button) would otherwise both pass is_over and both pay
+        # for a grading call. Only the request that actually closes the session
+        # grades it.
+        ended_at = datetime.datetime.now()
+        closed = (Session
+                  .update(ended_at=ended_at, stopped_because=reason)
+                  .where((Session.id == self.session.id) & Session.ended_at.is_null())
+                  .execute())
+        if closed != 1:
+            return None
+        self.session.ended_at = ended_at
+        self.session.stopped_because = reason
 
         grades = None
         try:
@@ -228,8 +327,15 @@ class SessionEngine:
                 notes={d: g.get("note") for d, g in grades.items() if d != "overall"},
                 source="proctor",
             )
+            if grades.get("overall"):
+                SessionFeedback.insert(
+                    session=self.session, summary=grades["overall"]
+                ).on_conflict(
+                    conflict_target=[SessionFeedback.session],
+                    update={SessionFeedback.summary: grades["overall"]},
+                ).execute()
         except Exception:  # noqa: BLE001 - a missing grade is not a broken session
-            pass
+            logger.exception("grading failed for session %s", self.session.id)
 
         if not RETAIN_TRANSCRIPTS:
             self._purge_transcript()

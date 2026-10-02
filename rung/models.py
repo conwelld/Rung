@@ -1,18 +1,17 @@
 """
 The schema.
 
-Seven tables. The shape is driven by one question: what does a student need to
+Eight tables. The shape is driven by one question: what does a student need to
 work on? Answering that means knowing how deep in the hint ladder they went, on
 which concepts, over time. Everything here exists to make that query possible.
 
 Two decisions worth reading before the code.
 
-**Turn does not store text.** No student message, no proctor reply. The
-diagnostic needs `rung_used` and a concept tag, and nothing else. Storing
-transcripts would mean holding a semester of student work, mistakes and all, in
-a SQLite file on a class server. `RETAIN_TRANSCRIPTS` in rung/config.py can turn
-it on for local debugging, and it defaults off. Collecting less is easier to
-defend than securing more. See SECURITY.md.
+**Turn text is working memory.** Student and proctor text is stored while a
+session is open because the stateless model API and end-of-session grader need
+it. `finish()` purges both fields unless `RETAIN_TRANSCRIPTS` is explicitly on,
+leaving rung, phase, and token evidence behind. The useful diagnostic outlives
+the sensitive transcript. See SECURITY.md.
 
 **The concept profile is a query, not a table.** Nothing precomputes or caches
 it. At class scale that query is milliseconds, and a stored aggregate is a
@@ -23,13 +22,16 @@ Denormalise when a measurement says to, not before. See rung/diagnostics.py.
 import datetime
 
 from peewee import (
-    AutoField, BooleanField, CharField, DateTimeField, ForeignKeyField,
-    IntegerField, Model, SqliteDatabase, TextField,
+    AutoField, BooleanField, CharField, DatabaseProxy, DateTimeField,
+    ForeignKeyField, IntegerField, Model, SqliteDatabase, TextField,
 )
 
-# Deferred: the path is supplied by init_db so tests can point at :memory:
-# without touching the real file.
-database = SqliteDatabase(None)
+# A proxy rather than a database: init_db decides at startup whether it stands
+# for SQLite (local, Elastic Beanstalk, tests at :memory:) or Postgres (Supabase
+# on Vercel), and every model keeps pointing at this same object either way.
+# An earlier version used a deferred SqliteDatabase here, which made the
+# Postgres path fail on its first line.
+database = DatabaseProxy()
 
 # SQLite does NOT enforce foreign keys unless you ask it to, per connection.
 # Without this pragma every ForeignKeyField below is documentation rather than a
@@ -64,9 +66,11 @@ class Student(Model):
 
 
 class Unit(BaseModel):
-    """The course's interview units. This is the difficulty axis: the
-    curriculum already orders these, so there is no separate difficulty rating
-    to invent or maintain."""
+    """The course's interview units and primary difficulty progression.
+
+    The problem bank may add a course-relative challenge label for scanning in
+    the picker; the unit remains the authoritative curriculum gate.
+    """
     id = AutoField()
     number = IntegerField(unique=True)
     title = CharField()
@@ -140,7 +144,15 @@ class Session(BaseModel):
     ended_at = DateTimeField(null=True)
     stopped_because = CharField(null=True)   # turn_limit, time_limit, token_budget, completed
     phase_reached = CharField(null=True)
+    # True when the final code passed every check in the bank, False when it
+    # was checked and did not, null when no checks ran on it. Reported by the
+    # browser, because student code never executes on the server.
     solved = BooleanField(null=True)
+    # One character per bank check, "1" passed and "0" failed: "1101". Kept so
+    # the debrief can name the failing inputs after the session is over.
+    check_results = CharField(null=True)
+    # Set while a turn's model call is in flight; see SessionEngine._claim_turn.
+    turn_lease_until = DateTimeField(null=True)
 
     input_tokens = IntegerField(default=0)
     output_tokens = IntegerField(default=0)
@@ -158,7 +170,8 @@ class Turn(BaseModel):
     moment. Deep rungs on one concept and shallow rungs on another is a profile,
     and it does not need pass/fail data to be useful.
 
-    Text fields are null by default. See the module docstring.
+    Text fields are populated for an open session and purged at finish by
+    default. See the module docstring.
     """
     id = AutoField()
     session = ForeignKeyField(Session, backref="turns", on_delete="CASCADE")
@@ -168,8 +181,8 @@ class Turn(BaseModel):
     rung_ceiling = IntegerField()
     advanced_phase = BooleanField(default=False)
 
-    student_text = TextField(null=True)     # only when RETAIN_TRANSCRIPTS
-    proctor_text = TextField(null=True)     # only when RETAIN_TRANSCRIPTS
+    student_text = TextField(null=True)     # working memory; normally purged
+    proctor_text = TextField(null=True)     # working memory; normally purged
 
     input_tokens = IntegerField(default=0)
     output_tokens = IntegerField(default=0)
@@ -214,8 +227,21 @@ class RubricScore(BaseModel):
         return self.LABELS.get(self.score, "not scored")
 
 
+class SessionFeedback(BaseModel):
+    """The grader's one actionable next step for a finished session.
+
+    Dimension notes belong beside their scores. This summary belongs to the
+    session itself and survives transcript deletion, so students leave with a
+    concrete practice target without us retaining their interview text.
+    """
+    id = AutoField()
+    session = ForeignKeyField(
+        Session, backref="feedback_rows", unique=True, on_delete="CASCADE")
+    summary = TextField()
+
+
 ALL_TABLES = [Student, Unit, Concept, Problem, ProblemConcept,
-              Session, Turn, RubricScore]
+              Session, Turn, RubricScore, SessionFeedback]
 
 
 def init_db(path=":memory:", create=True):
@@ -223,16 +249,68 @@ def init_db(path=":memory:", create=True):
 
     Call once at startup. `:memory:` gives tests a fresh database per run with
     no file to clean up and no chance of a test writing into real data.
+
+    `path` may also be a database URL. `postgresql://...` swaps the backend
+    without touching a single model or query, which is the concrete payoff of
+    using an ORM here rather than writing SQL by hand.
     """
-    if not database.is_closed():
+    if database.obj is not None and not database.is_closed():
         database.close()
-    database.init(path, pragmas=PRAGMAS)
-    database.connect()
+
+    if "://" in str(path):
+        from playhouse.db_url import connect as connect_url
+        options = {}
+        if str(path).startswith(("postgres://", "postgresql://")):
+            # Supabase's transaction pooler (port 6543, the one serverless
+            # hosts should use) hands each transaction to whichever server
+            # connection is free, so a statement psycopg prepared on one is
+            # missing on the next. None turns psycopg's automatic preparing off.
+            options["prepare_threshold"] = None
+        # Passwords with @ or : in them arrive percent-encoded in the URL.
+        backend = connect_url(str(path), unquote_user=True, unquote_password=True, **options)
+    else:
+        backend = SqliteDatabase(path, pragmas=PRAGMAS)
+    database.initialize(backend)
+
+    database.connect(reuse_if_open=True)
     if create:
         database.create_tables(ALL_TABLES)
     return database
 
 
+def describe_db(path) -> str:
+    """Where a database lives, with any password removed, for printing."""
+    from urllib.parse import urlsplit
+
+    if "://" not in str(path):
+        return str(path)
+    parts = urlsplit(str(path))
+    return f"{parts.scheme}://{parts.hostname}:{parts.port or ''}{parts.path}"
+
+
+def add_missing_columns():
+    """Add columns introduced after a database was first created.
+
+    create_tables() creates missing tables but never alters existing ones, so a
+    deployment whose database predates a column would fail on the first query
+    that selects it. Each step checks before it alters, so this is safe to run
+    on every startup.
+    """
+    from playhouse.migrate import SchemaMigrator, migrate
+
+    existing = {column.name for column in database.get_columns("session")}
+    # The migrator picks SQL by backend type, so it needs the real database
+    # behind the proxy.
+    migrator = SchemaMigrator.from_database(database.obj)
+    added = {
+        "check_results": CharField(null=True),
+        "turn_lease_until": DateTimeField(null=True),
+    }
+    for name, field in added.items():
+        if name not in existing:
+            migrate(migrator.add_column("session", name, field))
+
+
 def close_db():
-    if not database.is_closed():
+    if database.obj is not None and not database.is_closed():
         database.close()

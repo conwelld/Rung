@@ -1,0 +1,8 @@
+# Store and check out text files with LF line endings on every platform.
+# Git for Windows converts to CRLF on checkout by default, and a CRLF copy of
+# .ebextensions/02-backups.config writes shell scripts that bash refuses to
+# run on the Elastic Beanstalk instance. The offline suite checks for this.
+* text=auto eol=lf
+
+*.png binary
+*.zip binary

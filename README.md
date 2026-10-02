@@ -9,9 +9,33 @@ Built for the CSC coding interviews at Berea College, where interviews are
 already graded on communication, problem solving, technical competency, and
 debugging.
 
-This repository is the proctor and the evaluation harness. There is no UI yet,
-on purpose: the interesting claim this project makes is a measured one, so the
-measurement came first.
+The measurement came first; the product now sits on top of it. Students get a
+problem picker grouped by topic (Strings, Lists, Dictionaries...) or by course
+unit, with a course-relative difficulty on every problem; a server-enforced
+interview flow; a Python editor that runs locally in a killable Web Worker and
+checks their code against each problem's tests; a self-first debrief; and a
+progress page showing what they have solved, where their hints are deepest, and
+what to practise next. Instructors get a separately protected aggregate view of
+class concept signals and solved counts—never a transcript browser.
+
+## Product loop
+
+1. The deployment opens material through `RUNG_CURRENT_UNIT`, so the difficulty
+   follows the course calendar instead of exposing the whole semester at once.
+2. The student must explain an approach before the code editor unlocks.
+3. Python runs through Pyodide/WebAssembly in a module Web Worker. A four-second
+   timeout terminates infinite loops; untrusted code never executes on Flask.
+4. The student self-scores before the proctor score is rendered, preserving the
+   calibration exercise rather than anchoring their answer.
+5. Hint depth is grouped by concept and deterministically selects the next
+   useful drill. The LLM conducts the interview; it does not invent the learning
+   path.
+6. A problem counts as solved when the final code passes every check in the
+   bank, run in the browser by `rung/checks.py`. During a session the student
+   sees only how many checks pass; which inputs fail appears in the debrief,
+   because finding the breaking edge case is part of the exercise. Solved sits
+   beside the hint depth it took, so "solved on my own" and "solved with the
+   structural idea named for me" stay different records.
 
 ## The hint ladder
 
@@ -46,7 +70,7 @@ Practice and assessment are different products with different economics.
 | Phases | all four | approach, code |
 | Ladder ceiling | rung 4 | rung 2 |
 | History sent | full | last 6 exchanges |
-| Cost per session | ~$0.22 | ~$0.02 |
+| Cost per session | ~$0.15 | ~$0.02 |
 
 A drill is a rep on one concept the diagnostic flagged. A graded interview is
 the real thing, four times a semester. Running drills on interview settings is
@@ -56,7 +80,7 @@ are better practice anyway than twenty full-length mock interviews.
 ## Cost
 
 ```
-python cost_model.py
+python -m tools.cost_model
 ```
 
 No API key needed. Every assumption is at the top of the file, so the numbers
@@ -68,14 +92,14 @@ graded interviews each:
 | | Sessions | Cost |
 |---|---|---|
 | Drills | 6,750 | $128 |
-| Graded interviews | 120 | $26 |
-| **Total** | | **$155** (~$5.15 per student) |
+| Graded interviews | 120 | $18 |
+| **Total** | | **$146** (~$4.86 per student) |
 
-Running every one of those drills on interview settings instead: **$1,505**.
-The mode split is a 90% saving.
+Running every one of those drills on interview settings instead: **$1,003**.
+The mode split is an 85% saving.
 
 The number to take to a department is the enforced ceiling, not the average.
-With every student maxing the daily cap, 30 students is $539 a semester.
+With every student maxing the daily cap, 30 students is about $531 a semester.
 `DAILY_DRILL_LIMIT` in `config.py` is the lever: halve it and the ceiling halves.
 
 Why turn count dominates: the API is stateless, so the whole conversation is
@@ -83,9 +107,9 @@ resent every turn. Session cost grows with the square of turn count.
 
 | Turns | Input tokens | Cost | Per turn |
 |---|---|---|---|
-| 5 | 7,000 | $0.032 | $0.0065 |
-| 20 | 58,000 | $0.219 | $0.0110 |
-| 40 | 196,000 | $0.678 | $0.0169 |
+| 5 | 7,000 | $0.021 | $0.0043 |
+| 20 | 58,000 | $0.146 | $0.0073 |
+| 40 | 196,000 | $0.452 | $0.0113 |
 
 Eight times the turns, twenty-one times the cost. That is why the turn cap
 exists and why drill mode windows history.
@@ -98,7 +122,18 @@ set ANTHROPIC_API_KEY=sk-ant-...
 python -m app.server
 ```
 
+For production, see [VERCEL_DEPLOY.md](VERCEL_DEPLOY.md) (Vercel + Supabase,
+the quickest), [AWS_DEPLOY.md](AWS_DEPLOY.md) (Elastic Beanstalk), or
+[DEPLOY.md](DEPLOY.md) (Render). The app runs under gunicorn, refuses
+to boot without a signing key, and sets secure cookies; `python -m app.server`
+is the development server and marks itself as such.
+
 Then open http://127.0.0.1:5000. Pick a handle, a mode, and a problem.
+
+The first time the editor unlocks, the browser downloads the Pyodide runtime
+from jsDelivr. Code and console output stay in that browser worker; only the
+final editor contents are sent once, at session end, so technical competency
+can be graded. They are not retained after grading.
 
 The browser never sees the API key, never sees the forbidden insight for the
 problem, and never decides anything. Phase, rung ceiling, remaining time, and
@@ -261,9 +296,36 @@ including unit-test generation, git-diff framing, docstring extraction, and
 
 ### What this does not show
 
-Every attack is text in a chat turn. Nothing here tests a real student over 30
-minutes, a browser client, or code execution. The claim is bounded: across 177
-adversarial turns on two models, the proctor did not hand over a solution.
+Every adversarial attack is text in a chat turn. The offline application suite
+checks browser-runner wiring, server gates, ownership, quotas, debrief ordering,
+and instructor protection, but it is not a longitudinal classroom study or a
+cross-browser performance study. The claim is bounded: across 177 adversarial
+turns on two models, the proctor did not hand over a solution. Before quoting
+that number after a prompt or model change, rerun the evals.
+
+## Portfolio framing
+
+The stack is intentionally small: Flask and Jinja for the HTTP/UI boundary,
+Peewee with SQLite locally and a supported Postgres driver path for durable class
+deployments, direct Claude Messages API calls where request shape matters,
+Pyodide/WebAssembly for client-side Python isolation, and GitHub Actions for the
+offline quality gate. Redis, Celery, a JavaScript framework, and an LLM
+orchestration framework are absent because this workload does not require them.
+
+Resume bullets that stay honest:
+
+- Built a Socratic coding-interview coach with a server-enforced four-phase
+  state machine, tiered hint policy, concept-level diagnostics, and adaptive
+  practice recommendations for an introductory CS course.
+- Designed an adversarial LLM evaluation harness with deterministic and
+  model-based leak detection; recorded 0 solution leaks across 177 attacks and
+  control turns while measuring over-refusal separately.
+- Reduced modeled semester API spend 85% (about $1,003 to $146 for 30 students)
+  through task-specific model routing, history windowing, and server-side turn,
+  time, token, and daily quotas.
+- Isolated untrusted student Python in a timeout-controlled WebAssembly worker,
+  kept API credentials server-side, deleted transcripts after grading, and
+  exposed only protected aggregate class analytics.
 
 ## Layout
 
@@ -278,6 +340,7 @@ rung/                the system itself
   judge.py           two-tier leak detection
   budget.py          session limits and history windowing
   problems.py        loads whichever problem bank is present
+  checks.py          runs a problem's tests against student code (in the browser)
   grader.py          rubric scoring from transcript plus measured evidence
   models.py          peewee schema: students, units, concepts, sessions, turns
   diagnostics.py     the concept profile, in one query each
@@ -299,14 +362,29 @@ tests/
   test_offline.py    offline checks and secret scan, no API key required
   test_app.py        Flask and engine tests with the API stubbed
 
+wsgi.py              production entry point (gunicorn)
+render.yaml          Render deployment blueprint
+Procfile             Elastic Beanstalk start command (same gunicorn invocation)
+.ebextensions/       Elastic Beanstalk non-secret config: env vars, persistent
+                     data directory, static files, hourly S3 backups
+.ebignore            what `eb deploy` leaves out (local DB) and keeps (course bank)
+deploy/
+  cloudfront.yaml    CloudFormation for HTTPS in front of Elastic Beanstalk
+vercel.json          Vercel function settings (region, timeout, bundle exclusions)
+pyproject.toml       Vercel's entrypoint and dependencies (mirrors requirements.txt)
+.vercelignore        what `vercel deploy` leaves out; the course bank goes up
+public/static/       CSS and the Pyodide worker, served by Vercel's CDN or nginx
+
 app/                 the web layer
   engine.py          phase, rung ceiling, budget, persistence per session
   server.py          Flask routes, rate limiting, quotas
-  templates/         Jinja: picker, interview, debrief, profile
+  templates/         Jinja: picker, interview, debrief, profile, instructor
 results/             (gitignored) transcripts, which are student work
 
 DECISIONS.md         every choice made and what was rejected
 SECURITY.md          key handling, student data, abuse limits
+DEPLOY.md            how it gets to production on Render and what the free tier costs
+AWS_DEPLOY.md        Elastic Beanstalk + CloudFront + backups, from a fresh machine
 ```
 
 Four top-level packages, split by what talks to what. `rung/` is the only one
@@ -321,7 +399,20 @@ The interview questions this was built for are department course material,
 reused each semester, so they are not committed. `data/problems.sample.json`
 covers the same problems in my own wording, so the harness runs and every eval
 case resolves straight after a clone. Drop a `data/problems.json` beside it and
-the loader prefers that automatically.
+the loader prefers that automatically. Each entry declares its course `unit`,
+instructor-authored `challenge` (`warmup`, `core`, or `stretch`, shown as the
+problem's difficulty), an optional `topic` (the subject or data structure it is
+listed under; without one it is listed under its unit's title), diagnostic
+`concepts`, student-facing `prompt`, protected `forbidden_insight`, and `tests`
+as `[input, expected]` pairs. `input` is the single argument, or the list of
+arguments for a function that takes several; the function is called by the
+problem's id. A problem with no tests can be practised but never shows as
+solved. The loader validates that contract at startup so a malformed private
+question fails before a student begins a timed session.
+
+Run `python -m tools.init_db` after editing the bank. Seeding is idempotent and
+treats the selected bank as authoritative: removed questions become inactive
+without deleting historical sessions, and changed concept tags are reconciled.
 
 ## License
 

@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  HTTPS in front of the Rung Elastic Beanstalk environment. The environment
+  serves plain HTTP on its own; this gives it a certificate, a stable
+  https://dXXXX.cloudfront.net address, and a header that proves a request came
+  through here. See AWS_DEPLOY.md.
+
+# Every setting below exists because the CloudFront console's defaults break
+# this app:
+#   - Default cache policy (CachingOptimized) drops cookies and query strings
+#     before they reach the app, so no student ever stays signed in, and it
+#     caches pages, so one student's picker could be served to another.
+#   - Default allowed methods are GET and HEAD, so every form post and every
+#     chat turn fails at CloudFront with a 403.
+#   - The default 30 second origin timeout is shorter than a slow grading call.
+
+Parameters:
+  OriginDomain:
+    Type: String
+    Description: >-
+      The environment's CNAME from `eb status`, for example
+      rung-prod.eba-abcd1234.us-east-1.elasticbeanstalk.com (no http://).
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]+[a-z0-9]$"
+    ConstraintDescription: A bare hostname, without http:// or a trailing slash.
+  OriginSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    AllowedPattern: "^[A-Za-z0-9_-]+$"
+    Description: >-
+      The same value set as RUNG_ORIGIN_SECRET on the environment. Generate one
+      with: python -c "import secrets; print(secrets.token_hex(32))"
+
+Resources:
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Rung
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        # North America and Europe edges only: the cheapest class, and where
+        # the students are.
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: rung-eb
+            DomainName: !Ref OriginDomain
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: 80
+              # Grading at the end of a session can take longer than the
+              # default 30 seconds. 60 is the most CloudFront allows without
+              # a quota increase.
+              OriginReadTimeout: 60
+            OriginCustomHeaders:
+              - HeaderName: X-Rung-Origin
+                HeaderValue: !Ref OriginSecret
+        DefaultCacheBehavior:
+          TargetOriginId: rung-eb
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD]
+          # Managed-CachingDisabled: every request reaches the app.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # Managed-AllViewerExceptHostHeader: cookies, query strings and
+          # headers go through; Host becomes the origin's own name, which is
+          # what an *.elasticbeanstalk.com origin expects.
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+Outputs:
+  URL:
+    Description: The address to give students. Also set it as RUNG_PUBLIC_ORIGIN.
+    Value: !Sub "https://${Distribution.DomainName}"
+  DistributionId:
+    Value: !Ref Distribution

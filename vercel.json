@@ -1,0 +1,28 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": [
+    "iad1"
+  ],
+  "services": {
+    "rung": {
+      "root": ".",
+      "entrypoint": "wsgi:app",
+      "buildCommand": "pip install -r requirements.txt",
+      "functions": {
+        "wsgi.py": {
+          "maxDuration": 60,
+          "includeFiles": "public/**"
+        }
+      }
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "rung"
+      }
+    }
+  ]
+}

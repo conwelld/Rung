@@ -1,3 +1,9 @@
-requests>=2.31.0
-peewee>=3.17.0
-flask>=3.0.0
+requests>=2.32.0,<3
+peewee>=3.17.0,<5
+flask>=3.1.0,<4
+gunicorn>=23.0.0,<24
+# DATABASE_URL can point at Postgres (Supabase on Vercel). Without a DB-API
+# driver that path fails only after deployment.
+psycopg[binary]>=3.2.0,<4
+# Timezone data for RUNG_TIMEZONE on hosts without a system copy (Windows).
+tzdata>=2024.1

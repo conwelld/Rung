@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Class insights · Rung{% endblock %}
+{% block nav %}
+  <a href="{{ url_for('index') }}">Student practice</a>
+  <form class="inline-form" method="post" action="{{ url_for('instructor_logout') }}"><button class="ghost" type="submit">Sign out</button></form>
+{% endblock %}
+{% block body %}
+<header class="page-title">
+  <p class="eyebrow">Instructor analytics</p>
+  <h1>Class signals</h1>
+  <p class="lede">Aggregate hint depth shows concepts worth revisiting. Interview transcripts are not retained for this view.</p>
+  {% if current_unit %}<span class="pill current">Material open through unit {{ current_unit }}</span>{% endif %}
+</header>
+
+<section class="metric-grid" aria-label="Class totals">
+  <div class="panel metric"><span class="metric-value">{{ metrics.students }}</span><span class="metric-label">students</span></div>
+  <div class="panel metric"><span class="metric-value">{{ metrics.sessions }}</span><span class="metric-label">sessions started</span></div>
+  <div class="panel metric"><span class="metric-value">{{ metrics.completed }}</span><span class="metric-label">sessions completed</span></div>
+  <div class="panel metric"><span class="metric-value">{{ metrics.turns }}</span><span class="metric-label">measured turns</span></div>
+</section>
+
+<div class="section instructor-grid">
+  <section aria-labelledby="class-concepts">
+    <div class="section-head"><div><p class="eyebrow">Curriculum signal</p><h2 id="class-concepts">Hardest concepts</h2></div></div>
+    <div class="panel flush">
+      {% if concepts %}
+      <table class="data-table">
+        <thead><tr><th>Concept</th><th>Students</th><th>Avg rung</th></tr></thead>
+        <tbody>{% for row in concepts %}<tr><td><strong>{{ row.title }}</strong><br><span class="micro muted">{{ row.slug }}</span></td><td>{{ row.students }}</td><td>{{ row.avg_rung }}</td></tr>{% endfor %}</tbody>
+      </table>
+      {% else %}<div class="empty">No completed interview evidence yet.</div>{% endif %}
+    </div>
+  </section>
+
+  <section aria-labelledby="student-activity">
+    <div class="section-head"><div><p class="eyebrow">Participation</p><h2 id="student-activity">Student activity</h2></div></div>
+    <div class="panel flush">
+      {% if students %}
+      <div style="overflow-x:auto"><table class="data-table">
+        <thead><tr><th>Handle</th><th>Sessions</th><th>Solved</th><th>Avg rung</th><th>Last active</th></tr></thead>
+        <tbody>{% for row in students %}<tr><td><strong>{{ row.handle }}</strong></td><td>{{ row.sessions }}</td><td>{{ row.solved }}</td><td>{{ row.avg_rung if row.avg_rung is not none else '—' }}</td><td>{{ row.last_session.strftime('%b %d, %Y') if row.last_session else '—' }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% else %}<div class="empty">No students have started a session.</div>{% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

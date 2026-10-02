@@ -1,49 +1,119 @@
 {% extends "base.html" %}
+{% from "_difficulty.html" import difficulty_badge %}
+{% block title %}My progress · Rung{% endblock %}
 {% block body %}
-<h1>{{ student.handle }}</h1>
-<p class="sub">{{ student.sessions.count() }} sessions. How deep in the hint
-ladder you went, grouped by concept. Lower is better.</p>
-
-{% if weakest %}
-<h2>Drill these next</h2>
-<div class="panel">
-  {% for row in weakest %}
-  <div style="padding:6px 0">
-    <strong>{{ row.title }}</strong>
-    <span class="small muted">
-      average rung {{ row.avg_rung }}, {{ row.deep_turns }} deep hint(s)
-      across {{ row.sessions }} session(s)
-    </span>
+<header class="profile-hero page-title">
+  <div>
+    <p class="eyebrow">Learning diagnostic</p>
+    <h1>{{ student.handle }}</h1>
+    <p class="lede">{{ student.sessions.count() }} session{% if student.sessions.count() != 1 %}s{% endif %} · {{ solved|length }} of {{ problem_count }} problems solved · {{ practiced_count }} practiced. Lower hint depth means you carried more of the reasoning yourself.</p>
   </div>
-  {% endfor %}
-</div>
+  <a class="button" href="{{ url_for('index') }}#practice">Practice again</a>
+</header>
+
+{% if recommendations %}
+<section aria-labelledby="next-heading">
+  <div class="section-head">
+    <div><p class="eyebrow">Recommended next</p><h2 id="next-heading">Turn the signal into a rep</h2></div>
+  </div>
+  <div class="recommend-grid">
+    {% for item in recommendations %}
+    <article class="panel recommend-card">
+      <div><span class="tag">{{ item.topic }}</span> {{ difficulty_badge(item) }}{% if item.solved %} <span class="tag solved-tag">Solved</span>{% elif item.attempts == 0 %} <span class="tag">New</span>{% endif %}</div>
+      <h3>{{ item.title.replace('_', ' ')|title }}</h3>
+      <p class="small muted">{{ item.reason }}</p>
+      <form method="post" action="{{ url_for('start') }}">
+        <input type="hidden" name="handle" value="{{ student.handle }}">
+        <input type="hidden" name="mode" value="drill">
+        <input type="hidden" name="problem" value="{{ item.slug }}">
+        <button type="submit">Start focused drill</button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+</section>
 {% endif %}
 
-<h2>Every concept</h2>
-<table>
-  <tr><th>Concept</th><th>Turns</th><th>Avg rung</th><th>Deepest</th><th></th></tr>
-  {% for row in profile %}
-  <tr>
-    <td>{{ row.title }}</td>
-    <td>{{ row.turns }}</td>
-    <td>{{ row.avg_rung }}</td>
-    <td>{{ row.max_rung }}</td>
-    <td style="width:180px">
-      <span class="bar-cell" style="width:{{ (row.avg_rung / 4 * 100)|round }}%"></span>
-    </td>
-  </tr>
-  {% endfor %}
-</table>
+<section class="section" aria-labelledby="topic-heading">
+  <div class="section-head">
+    <div><p class="eyebrow">By subject</p><h2 id="topic-heading">Progress by topic</h2></div>
+    <span class="small muted">Solved means every check passed</span>
+  </div>
+  <div class="panel flush">
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr><th>Topic</th><th>Solved</th><th>Practiced</th><th>Avg rung</th><th>Signal</th></tr></thead>
+        <tbody>
+          {% for group in topics %}
+          <tr>
+            <td><strong>{{ group.title }}</strong><br><span class="micro muted">{{ group.tag }}{% if group.checked_count < group.problem_count %} · {{ group.problem_count - group.checked_count }} without checks{% endif %}</span></td>
+            <td>{{ group.solved_count }}/{{ group.checked_count }}</td>
+            <td>{{ group.practiced_count }}/{{ group.problem_count }}</td>
+            <td>{{ group.avg_rung if group.avg_rung is not none else '—' }}</td>
+            <td>{% if group.avg_rung is not none %}<div class="bar-track" aria-label="Average rung {{ group.avg_rung }} of 4"><span class="bar-fill" style="width:{{ (group.avg_rung / 4 * 100)|round }}%"></span></div>{% else %}<span class="micro muted">not started</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
 
-<h2>Units</h2>
-<table>
-  <tr><th>Unit</th><th>Sessions</th><th>Avg rung</th></tr>
-  {% for row in units %}
-  <tr>
-    <td>{{ row.number }}. {{ row.title }}</td>
-    <td>{{ row.sessions or '-' }}</td>
-    <td>{{ row.avg_rung if row.avg_rung is not none else '-' }}</td>
-  </tr>
-  {% endfor %}
-</table>
+<section class="section" aria-labelledby="concept-heading">
+  <div class="section-head">
+    <div><p class="eyebrow">Concept evidence</p><h2 id="concept-heading">Where hints are deepest</h2></div>
+    <span class="small muted">Deep means rung 3 or 4</span>
+  </div>
+  <div class="panel flush">
+    {% if profile %}
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr><th>Concept</th><th>Sessions</th><th>Turns</th><th>Avg rung</th><th>Deepest</th><th>Signal</th></tr></thead>
+        <tbody>
+          {% for row in profile %}
+          <tr>
+            <td><strong>{{ row.title }}</strong></td>
+            <td>{{ row.sessions }}</td>
+            <td>{{ row.turns }}</td>
+            <td>{{ row.avg_rung }}</td>
+            <td>{{ row.max_rung }}</td>
+            <td><div class="bar-track" aria-label="Average rung {{ row.avg_rung }} of 4"><span class="bar-fill" style="width:{{ (row.avg_rung / 4 * 100)|round }}%"></span></div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">Finish a session to build your concept profile.</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section" aria-labelledby="solved-heading">
+  <div class="section-head">
+    <div><p class="eyebrow">Solved problems</p><h2 id="solved-heading">Code that passed every check</h2></div>
+    <span class="small muted">Deepest hint in your least-helped solve</span>
+  </div>
+  <div class="panel flush">
+    {% if solved %}
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr><th>Problem</th><th>Topic</th><th>Difficulty</th><th>Help needed</th></tr></thead>
+        <tbody>
+          {% for item in solved %}
+          <tr>
+            <td><strong>{{ item.title.replace('_', ' ')|title }}</strong></td>
+            <td>{{ item.topic }}</td>
+            <td>{{ difficulty_badge(item) }}</td>
+            <td>{% if item.best_depth is none or item.best_depth <= 1 %}Mostly on your own{% else %}Rung {{ item.best_depth }} hint{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">Nothing solved yet. In a session, use Run checks once the editor opens; passing every check marks the problem solved.</div>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}

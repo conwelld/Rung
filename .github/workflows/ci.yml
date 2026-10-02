@@ -1,0 +1,65 @@
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-contracts:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    env:
+      RUNG_ENV: development
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - run: python -m compileall -q app rung tests tools evals
+      - run: python -m tests.test_offline
+      - run: python -m tests.test_app
+      - run: python -m tools.cost_model
+      # The CloudFront template is only ever exercised by a real deploy, so
+      # lint it here instead of finding a typo at stack-creation time.
+      - run: pip install cfn-lint && cfn-lint deploy/cloudfront.yaml
+
+  # The app suite again, against Postgres: the backend Supabase runs on Vercel.
+  # The SQLite run above never touches Postgres-only behaviour (Decimal
+  # averages, NULL ordering, strict GROUP BY), which is how the DATABASE_URL
+  # path stayed broken until it was tested.
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          # A throwaway container that only this job can reach, so no password:
+          # a public repository should not contain anything shaped like one.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      RUNG_ENV: development
+      RUNG_TEST_DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m tests.test_app

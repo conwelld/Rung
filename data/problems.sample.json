@@ -2,6 +2,8 @@
   "count_letters": {
     "unit": 1,
     "title": "count_letters",
+    "challenge": "warmup",
+    "topic": "Strings",
     "concepts": [
       "function-basics",
       "string-traversal",
@@ -31,6 +33,8 @@
   "compress_run": {
     "unit": 1,
     "title": "compress_run",
+    "challenge": "core",
+    "topic": "Strings",
     "concepts": [
       "string-traversal",
       "accumulator",
@@ -61,6 +65,8 @@
   "second_largest": {
     "unit": 1,
     "title": "second_largest",
+    "challenge": "core",
+    "topic": "Lists",
     "concepts": [
       "list-traversal",
       "sorting",
@@ -104,6 +110,8 @@
   "find_pairs": {
     "unit": 2,
     "title": "find_pairs",
+    "challenge": "core",
+    "topic": "Lists",
     "concepts": [
       "list-traversal",
       "nested-iteration",
@@ -144,6 +152,8 @@
   "multiply_except": {
     "unit": 2,
     "title": "multiply_except",
+    "challenge": "stretch",
+    "topic": "Lists",
     "concepts": [
       "list-traversal",
       "accumulator",
@@ -180,6 +190,8 @@
   "invert_dictionary": {
     "unit": 3,
     "title": "invert_dictionary",
+    "challenge": "core",
+    "topic": "Dictionaries",
     "concepts": [
       "dict-construction",
       "dict-of-lists",
@@ -213,6 +225,8 @@
   "log_purchase": {
     "unit": 3,
     "title": "log_purchase",
+    "challenge": "core",
+    "topic": "Dictionaries",
     "concepts": [
       "dict-construction",
       "nested-dicts",
@@ -240,6 +254,8 @@
   "student_class": {
     "unit": 4,
     "title": "Student class",
+    "challenge": "stretch",
+    "topic": "Classes & objects",
     "concepts": [
       "class-definition",
       "attributes",

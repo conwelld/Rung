@@ -1,0 +1,6 @@
+{# The difficulty badge: the course-relative label plus a three-step meter.
+   The words carry the meaning and the meter is a visual aid only, so it is
+   hidden from assistive technology rather than read out as three dots. #}
+{% macro difficulty_badge(item) -%}
+<span class="challenge-badge challenge-{{ item.challenge }}" title="Difficulty {{ item.difficulty }} of 3"><span class="difficulty-meter" aria-hidden="true">{% for step in range(1, 4) %}<span{% if step <= item.difficulty %} class="on"{% endif %}></span>{% endfor %}</span>{{ item.challenge_label }}</span>
+{%- endmacro %}

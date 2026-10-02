@@ -1,0 +1,23 @@
+# What `vercel deploy` leaves out of the upload.
+#
+# The Vercel CLI does not read .gitignore: everything not listed here is
+# uploaded. That is deliberate, the same way .ebignore works, because it is how
+# the gitignored course bank data/problems.json reaches the server.
+#
+# .elasticbeanstalk/ holds earlier application bundles (with the bank and a
+# database inside them) and instance logs. .env holds the Supabase password.
+.git
+.elasticbeanstalk
+.vercel
+.venv
+venv
+__pycache__
+*.pyc
+.env
+.env.*
+results
+tmp
+*.zip
+data/*.db
+data/*.db-wal
+data/*.db-shm

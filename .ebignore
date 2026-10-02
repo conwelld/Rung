@@ -1,0 +1,24 @@
+# What `eb deploy` leaves out of the application bundle.
+#
+# With this file present the EB CLI ignores .gitignore and zips the working
+# directory instead of the last git commit. That is deliberate: it is how the
+# gitignored private course bank, data/problems.json, reaches the server.
+#
+# The local database is excluded because it is not the production one (that
+# lives at /var/rung-data on the instance) and because it holds student data
+# that has no reason to sit in an S3 application-version bucket.
+.elasticbeanstalk/
+.vercel/
+.git/
+.github/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+results/
+tmp/
+*.zip
+data/*.db
+data/*.db-wal
+data/*.db-shm

@@ -255,10 +255,14 @@ def _parse(text: str, ceiling: int) -> dict:
         if candidate is None:
             raise ValueError("no JSON object found")
         parsed = json.loads(candidate)
+        advance = parsed.get("advance_phase", False)
+        if isinstance(advance, str):
+            advance = advance.strip().lower() == "true"
         return {
             "rung_used": int(parsed.get("rung_used", 0)),
-            "advance_phase": bool(parsed.get("advance_phase", False)),
-            "reply": str(parsed.get("reply", "")),
+            "advance_phase": bool(advance),
+            "reply": str(parsed.get("reply", "")).strip()
+            or "Talk me through what you are considering next.",
             "rung_ceiling": ceiling,
             "parse_ok": True,
             "raw": text,
